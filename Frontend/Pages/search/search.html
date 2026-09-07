@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>USA - Best Options</title>
+
+    <link rel="stylesheet" href="search.css">
+</head>
+
+<body>
+
+    <!-- =========================
+         HEADER
+    ========================== -->
+
+    <header class="header">
+
+        <a href="../../index.html" class="logo">
+            USA<span>.</span>
+        </a>
+
+        <div class="header-search">
+
+            <input
+                type="text"
+                id="topSearch"
+                placeholder="Search for a product..."
+            >
+
+            <button id="topSearchButton">
+                Search
+            </button>
+
+        </div>
+
+        <div class="header-actions">
+
+            <button class="header-btn" id="wishlistButton">
+                ♡
+            </button>
+
+            <button class="header-btn" id="accountButton">
+                Account
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- =========================
+         MAIN
+    ========================== -->
+
+    <main class="container">
+
+
+        <!-- SEARCH SUMMARY -->
+
+        <section class="search-summary">
+
+            <p class="small-title">
+                YOUR SEARCH
+            </p>
+
+            <h1 id="searchQuery">
+                Find the best products for you
+            </h1>
+
+            <p class="result-count" id="resultCount">
+                Choose a category or search for a product.
+            </p>
+
+        </section>
+
+
+        <!-- =========================
+             CATEGORIES
+        ========================== -->
+
+        <section class="category-section">
+
+            <div class="section-heading">
+
+                <div>
+
+                    <p class="small-title">
+                        EXPLORE
+                    </p>
+
+                    <h2>
+                        Shop by Category
+                    </h2>
+
+                </div>
+
+            </div>
+
+
+            <div class="category-wrapper">
+
+                <button
+                    class="category-arrow category-prev"
+                    id="categoryPrev"
+                    aria-label="Previous categories"
+                >
+                    ←
+                </button>
+
+
+                <div
+                    class="category-slider"
+                    id="categorySlider"
+                >
+
+                    <button
+                        class="category-btn active"
+                        data-category="All"
+                    >
+                        <span>✨</span>
+                        <strong>All Products</strong>
+                    </button>
+
+
+                    <button class="category-btn" data-category="Tech">
+                        <span>💻</span>
+                        <strong>Tech</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Phones">
+                        <span>📱</span>
+                        <strong>Phones</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Laptops">
+                        <span>💻</span>
+                        <strong>Laptops</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Tablets">
+                        <span>📲</span>
+                        <strong>Tablets</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Headphones">
+                        <span>🎧</span>
+                        <strong>Headphones</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Cameras">
+                        <span>📷</span>
+                        <strong>Cameras</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Gaming">
+                        <span>🎮</span>
+                        <strong>Gaming</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Fashion">
+                        <span>👕</span>
+                        <strong>Fashion</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Shoes">
+                        <span>👟</span>
+                        <strong>Shoes</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Watches">
+                        <span>⌚</span>
+                        <strong>Watches</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Jewelry">
+                        <span>💎</span>
+                        <strong>Jewelry</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Beauty">
+                        <span>💄</span>
+                        <strong>Beauty</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Skincare">
+                        <span>🧴</span>
+                        <strong>Skincare</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Makeup">
+                        <span>💋</span>
+                        <strong>Makeup</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Home">
+                        <span>🏠</span>
+                        <strong>Home</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Furniture">
+                        <span>🛋️</span>
+                        <strong>Furniture</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Kitchen">
+                        <span>🍳</span>
+                        <strong>Kitchen</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Appliances">
+                        <span>🔌</span>
+                        <strong>Appliances</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Sports">
+                        <span>⚽</span>
+                        <strong>Sports</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Fitness">
+                        <span>🏋️</span>
+                        <strong>Fitness</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Books">
+                        <span>📚</span>
+                        <strong>Books</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Toys">
+                        <span>🧸</span>
+                        <strong>Toys</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Baby">
+                        <span>👶</span>
+                        <strong>Baby</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Automotive">
+                        <span>🚗</span>
+                        <strong>Automotive</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Tools">
+                        <span>🔧</span>
+                        <strong>Tools</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Pet">
+                        <span>🐾</span>
+                        <strong>Pet</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Office">
+                        <span>💼</span>
+                        <strong>Office</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Travel">
+                        <span>✈️</span>
+                        <strong>Travel</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Food">
+                        <span>🍔</span>
+                        <strong>Food</strong>
+                    </button>
+
+                    <button class="category-btn" data-category="Grocery">
+                        <span>🛒</span>
+                        <strong>Grocery</strong>
+                    </button>
+
+                </div>
+
+
+                <button
+                    class="category-arrow category-next"
+                    id="categoryNext"
+                    aria-label="Next categories"
+                >
+                    →
+                </button>
+
+            </div>
+
+        </section>
+
+
+        <!-- =========================
+             RECOMMENDATIONS
+        ========================== -->
+
+        <section class="recommendation-summary">
+
+            <div class="recommendation-box">
+
+                <div class="recommendation-icon">
+                    🏆
+                </div>
+
+                <div>
+                    <span>BEST VALUE</span>
+                    <strong id="bestValueName">-</strong>
+                </div>
+
+            </div>
+
+
+            <div class="recommendation-box">
+
+                <div class="recommendation-icon">
+                    💰
+                </div>
+
+                <div>
+                    <span>LOWEST PRICE</span>
+                    <strong id="lowestPriceName">-</strong>
+                </div>
+
+            </div>
+
+
+            <div class="recommendation-box">
+
+                <div class="recommendation-icon">
+                    ⭐
+                </div>
+
+                <div>
+                    <span>BEST QUALITY</span>
+                    <strong id="bestQualityName">-</strong>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- =========================
+             CONTENT
+        ========================== -->
+
+        <div class="content-layout">
+
+
+            <!-- =========================
+                 DYNAMIC FILTERS
+            ========================== -->
+
+            <aside class="filters">
+
+                <div class="filter-header">
+
+                    <h2>
+                        Filters
+                    </h2>
+
+                    <button id="clearFilters">
+                        Clear
+                    </button>
+
+                </div>
+
+
+                <!-- JavaScript generates
+                     category-specific filters here -->
+
+                <div id="dynamicFilters">
+
+                    <div class="filter-loading">
+                        Loading filters...
+                    </div>
+
+                </div>
+
+            </aside>
+
+
+            <!-- =========================
+                 PRODUCTS
+            ========================== -->
+
+            <section class="products-section">
+
+                <div class="products-header">
+
+                    <div>
+
+                        <h2>
+                            Best Options For You
+                        </h2>
+
+                        <p id="productsFound">
+                            0 products found
+                        </p>
+
+                    </div>
+
+
+                    <div class="sort-container">
+
+                        <label for="sortSelect">
+                            Sort by:
+                        </label>
+
+                        <select id="sortSelect">
+
+                            <option value="value">
+                                Best Value
+                            </option>
+
+                            <option value="price">
+                                Lowest Price
+                            </option>
+
+                            <option value="rating">
+                                Highest Rated
+                            </option>
+
+                            <option value="quality">
+                                Best Quality
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                <!-- PRODUCT GRID -->
+
+                <div
+                    class="product-grid"
+                    id="productGrid"
+                >
+                    <!-- Products inserted by JavaScript -->
+                </div>
+
+
+                <div
+                    class="empty-state"
+                    id="emptyState"
+                    hidden
+                >
+
+                    <div class="empty-icon">
+                        🔍
+                    </div>
+
+                    <h3>
+                        No products found
+                    </h3>
+
+                    <p>
+                        Try changing your filters or search.
+                    </p>
+
+                </div>
+
+            </section>
+
+        </div>
+
+    </main>
+
+
+    <!-- =========================
+         WHY IT'S BETTER MODAL
+    ========================== -->
+
+    <div
+        class="modal-overlay"
+        id="whyModal"
+    >
+
+        <div class="why-modal">
+
+            <button
+                class="modal-close"
+                id="modalClose"
+            >
+                ×
+            </button>
+
+
+            <div class="modal-badge">
+                🏆 USA RECOMMENDATION
+            </div>
+
+
+            <h2 id="modalProductName">
+                Product Name
+            </h2>
+
+
+            <p
+                class="modal-category"
+                id="modalProductCategory"
+            >
+                Category
+            </p>
+
+
+            <div class="modal-main-info">
+
+                <div class="modal-price">
+                    $<span id="modalProductPrice">0</span>
+                </div>
+
+                <div class="modal-rating">
+                    ★ <span id="modalProductRating">0</span>
+                </div>
+
+                <div class="modal-quality">
+                    Quality
+                    <strong id="modalProductQuality">0</strong>/100
+                </div>
+
+            </div>
+
+
+            <div class="why-section">
+
+                <h3>
+                    Why is it better?
+                </h3>
+
+                <p id="modalReason">
+                    -
+                </p>
+
+            </div>
+
+
+            <div class="comparison-list">
+
+                <div class="comparison-item">
+
+                    <span>💰</span>
+
+                    <p id="priceComparison">
+                        -
+                    </p>
+
+                </div>
+
+
+                <div class="comparison-item">
+
+                    <span>⭐</span>
+
+                    <p id="ratingComparison">
+                        -
+                    </p>
+
+                </div>
+
+
+                <div class="comparison-item">
+
+                    <span>🏅</span>
+
+                    <p id="qualityComparison">
+                        -
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div class="feature-list">
+
+                <h3>
+                    Key Features
+                </h3>
+
+                <div id="modalFeatures">
+                    <!-- Features inserted here -->
+                </div>
+
+            </div>
+
+
+            <div class="usa-verdict">
+
+                <span>
+                    USA VERDICT
+                </span>
+
+                <strong id="modalVerdict">
+                    Great choice
+                </strong>
+
+            </div>
+
+
+            <p class="demo-note">
+                * Product information is based on the data currently available to USA.
+            </p>
+
+        </div>
+
+    </div>
+
+
+    <script src="search.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Create Account | BuyBuddy</title>
+
+    <link rel="stylesheet" href="css/auth.css">
+</head>
+
+<body>
+
+    <div class="auth-container">
+
+        <!-- LEFT SIDE -->
+        <div class="auth-left">
+
+            <div class="brand">
+                <span>🛍️</span> Universal Shopping Assistant
+            </div>
+
+            <div class="welcome">
+
+                <h1>Shop Smarter.</h1>
+
+                <p>
+                    Create your account and let USA become
+                    your personal shopping assistant.
+                </p>
+
+                <div class="features">
+
+                    <div>
+                        ✓ Find better products
+                    </div>
+
+                    <div>
+                        ✓ Compare prices
+                    </div>
+
+                    <div>
+                        ✓ Get personalized recommendations
+                    </div>
+
+                    <div>
+                        ✓ Save time & money
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- RIGHT SIDE -->
+        <div class="auth-right">
+
+            <div class="auth-box">
+
+                <h2>Create Account ✨</h2>
+
+                <p class="subtitle">
+                    Join USA and start shopping smarter.
+                </p>
+
+
+                <form id="signupForm">
+
+                    <div class="input-row">
+
+                        <div class="input-group">
+
+                            <label for="firstName">
+                                First Name
+                            </label>
+
+                            <input
+                                type="text"
+                                id="firstName"
+                                placeholder="First name"
+                                required
+                            >
+
+                        </div>
+
+
+                        <div class="input-group">
+
+                            <label for="lastName">
+                                Last Name
+                            </label>
+
+                            <input
+                                type="text"
+                                id="lastName"
+                                placeholder="Last name"
+                                required
+                            >
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="input-group">
+
+                        <label for="signupEmail">
+                            Email Address
+                        </label>
+
+                        <input
+                            type="email"
+                            id="signupEmail"
+                            placeholder="Enter your email"
+                            required
+                        >
+
+                    </div>
+
+
+                    <div class="input-group">
+
+                        <label for="signupPassword">
+                            Password
+                        </label>
+
+                        <div class="password-box">
+
+                            <input
+                                type="password"
+                                id="signupPassword"
+                                placeholder="Create a password"
+                                required
+                            >
+
+                            <button
+                                type="button"
+                                class="show-password"
+                                onclick="togglePassword('signupPassword', this)"
+                            >
+                                👁
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="input-group">
+
+                        <label for="confirmPassword">
+                            Confirm Password
+                        </label>
+
+                        <div class="password-box">
+
+                            <input
+                                type="password"
+                                id="confirmPassword"
+                                placeholder="Confirm your password"
+                                required
+                            >
+
+                            <button
+                                type="button"
+                                class="show-password"
+                                onclick="togglePassword('confirmPassword', this)"
+                            >
+                                👁
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <label class="terms">
+
+                        <input type="checkbox" required>
+
+                        <span>
+                            I agree to the
+                            <a href="#">Terms & Conditions</a>
+                            and
+                            <a href="#">Privacy Policy</a>.
+                        </span>
+
+                    </label>
+
+
+                    <button type="submit" class="auth-btn">
+                        Create Account
+                    </button>
+
+                </form>
+
+
+                <div class="divider">
+                    <span>OR</span>
+                </div>
+
+
+                <button class="google-btn" type="button">
+
+                    <span>G</span>
+
+                    Continue with Google
+
+                </button>
+
+
+                <p class="switch-page">
+
+                    Already have an account?
+
+                    <a href="login.html">
+                        Login
+                    </a>
+
+                </p>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <script src="js/auth.js"></script>
+
+</body>
+</html>
