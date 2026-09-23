@@ -376,3 +376,119 @@ body {
     }
 
 }
+/* ==========================================
+   USA AUTH MESSAGE BOX
+========================================== */
+
+.auth-message-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(5px);
+}
+
+.auth-message-box {
+    width: min(430px, calc(100% - 40px));
+
+    background: #ffffff;
+    border-radius: 18px;
+
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.20);
+
+    overflow: hidden;
+
+    animation: authMessageShow 0.25s ease;
+}
+
+.auth-message-header {
+    padding: 18px 22px;
+
+    font-size: 18px;
+    font-weight: 700;
+
+    border-bottom: 1px solid #eeeeee;
+}
+
+.auth-message-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.auth-message-table td {
+    padding: 15px 20px;
+
+    border-bottom: 1px solid #eeeeee;
+
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.auth-message-label {
+    width: 90px;
+
+    font-weight: 700;
+    color: #666666;
+}
+
+.auth-message-value {
+    color: #222222;
+}
+
+.auth-message-button-area {
+    padding: 18px 20px;
+
+    display: flex;
+    justify-content: flex-end;
+}
+
+.auth-message-button {
+    border: none;
+    border-radius: 10px;
+
+    padding: 11px 24px;
+
+    background: #111111;
+    color: #ffffff;
+
+    font-size: 14px;
+    font-weight: 600;
+
+    cursor: pointer;
+
+    transition:
+        transform 0.2s ease,
+        opacity 0.2s ease;
+}
+
+.auth-message-button:hover {
+    transform: translateY(-1px);
+    opacity: 0.9;
+}
+
+.auth-message-success .auth-message-header {
+    color: #16803c;
+}
+
+.auth-message-error .auth-message-header {
+    color: #c62828;
+}
+
+@keyframes authMessageShow {
+
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}

@@ -78,7 +78,7 @@
 
 
         <!-- =========================
-             CATEGORIES
+             CATEGORY SECTION
         ========================== -->
 
         <section class="category-section">
@@ -86,7 +86,6 @@
             <div class="section-heading">
 
                 <div>
-
                     <p class="small-title">
                         EXPLORE
                     </p>
@@ -94,7 +93,6 @@
                     <h2>
                         Shop by Category
                     </h2>
-
                 </div>
 
             </div>
@@ -116,6 +114,8 @@
                     id="categorySlider"
                 >
 
+                    <!-- ALL PRODUCTS -->
+
                     <button
                         class="category-btn active"
                         data-category="All"
@@ -124,6 +124,8 @@
                         <strong>All Products</strong>
                     </button>
 
+
+                    <!-- 30 ACTUAL CATEGORIES -->
 
                     <button class="category-btn" data-category="Tech">
                         <span>💻</span>
@@ -297,7 +299,7 @@
 
         <section class="recommendation-summary">
 
-            <div class="recommendation-box">
+            <div class="recommendation-box best-value">
 
                 <div class="recommendation-icon">
                     🏆
@@ -311,7 +313,7 @@
             </div>
 
 
-            <div class="recommendation-box">
+            <div class="recommendation-box lowest-price">
 
                 <div class="recommendation-icon">
                     💰
@@ -325,7 +327,7 @@
             </div>
 
 
-            <div class="recommendation-box">
+            <div class="recommendation-box best-quality">
 
                 <div class="recommendation-icon">
                     ⭐
@@ -348,44 +350,10 @@
         <div class="content-layout">
 
 
-            <!-- =========================
-                 DYNAMIC FILTERS
-            ========================== -->
-
-            <aside class="filters">
-
-                <div class="filter-header">
-
-                    <h2>
-                        Filters
-                    </h2>
-
-                    <button id="clearFilters">
-                        Clear
-                    </button>
-
-                </div>
-
-
-                <!-- JavaScript generates
-                     category-specific filters here -->
-
-                <div id="dynamicFilters">
-
-                    <div class="filter-loading">
-                        Loading filters...
-                    </div>
-
-                </div>
-
-            </aside>
-
-
-            <!-- =========================
-                 PRODUCTS
-            ========================== -->
+            <!-- PRODUCTS -->
 
             <section class="products-section">
+
 
                 <div class="products-header">
 
@@ -446,10 +414,9 @@
                 <div
                     class="empty-state"
                     id="emptyState"
-                    hidden
                 >
 
-                    <div class="empty-icon">
+                    <div>
                         🔍
                     </div>
 
@@ -458,7 +425,7 @@
                     </h3>
 
                     <p>
-                        Try changing your filters or search.
+                        Try searching for another product.
                     </p>
 
                 </div>
@@ -468,6 +435,35 @@
         </div>
 
     </main>
+
+
+    <!-- =========================
+         COMPARE BAR
+    ========================== -->
+
+    <div
+        class="compare-bar"
+        id="compareBar"
+    >
+
+        <div>
+
+            <strong>
+                <span id="compareCount">0</span>
+                products selected
+            </strong>
+
+            <span>
+                Choose products to compare
+            </span>
+
+        </div>
+
+        <button id="compareButton">
+            Compare Products
+        </button>
+
+    </div>
 
 
     <!-- =========================
@@ -518,8 +514,7 @@
                 </div>
 
                 <div class="modal-quality">
-                    Quality
-                    <strong id="modalProductQuality">0</strong>/100
+                    Quality <strong id="modalProductQuality">0</strong>/100
                 </div>
 
             </div>
@@ -541,35 +536,26 @@
             <div class="comparison-list">
 
                 <div class="comparison-item">
-
                     <span>💰</span>
-
                     <p id="priceComparison">
                         -
                     </p>
-
                 </div>
 
 
                 <div class="comparison-item">
-
                     <span>⭐</span>
-
                     <p id="ratingComparison">
                         -
                     </p>
-
                 </div>
 
 
                 <div class="comparison-item">
-
                     <span>🏅</span>
-
                     <p id="qualityComparison">
                         -
                     </p>
-
                 </div>
 
             </div>
@@ -602,13 +588,18 @@
 
 
             <p class="demo-note">
-                * Product information is based on the data currently available to USA.
+                * These comparisons use the demo product data currently
+                built into this website. Real market data can be connected later.
             </p>
 
         </div>
 
     </div>
 
+
+    <!-- =========================
+         JAVASCRIPT
+    ========================== -->
 
     <script src="search.js"></script>
 

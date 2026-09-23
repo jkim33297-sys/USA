@@ -31,6 +31,141 @@ function togglePassword(inputId, button) {
 }
 
 
+// ==========================================
+// USA AUTH MESSAGE BOX
+// ==========================================
+
+function showAuthMessage(
+    title,
+    message,
+    type = "success",
+    buttonText = "Continue",
+    onClose = null
+) {
+
+    const oldMessage =
+        document.getElementById(
+            "usaAuthMessage"
+        );
+
+    if (oldMessage) {
+        oldMessage.remove();
+    }
+
+
+    const overlay =
+        document.createElement("div");
+
+    overlay.id =
+        "usaAuthMessage";
+
+    overlay.className =
+        "auth-message-overlay";
+
+
+    const box =
+        document.createElement("div");
+
+    box.className =
+        "auth-message-box " +
+        (
+            type === "error"
+                ? "auth-message-error"
+                : "auth-message-success"
+        );
+
+
+    box.innerHTML = `
+        <div class="auth-message-header">
+            ${title}
+        </div>
+
+        <table class="auth-message-table">
+
+            <tr>
+                <td class="auth-message-label">
+                    Status
+                </td>
+
+                <td class="auth-message-value">
+                    ${
+                        type === "error"
+                            ? "Error"
+                            : "Success"
+                    }
+                </td>
+            </tr>
+
+            <tr>
+                <td class="auth-message-label">
+                    Message
+                </td>
+
+                <td class="auth-message-value">
+                    ${message}
+                </td>
+            </tr>
+
+        </table>
+
+        <div class="auth-message-button-area">
+
+            <button
+                type="button"
+                class="auth-message-button"
+                id="authMessageButton"
+            >
+                ${buttonText}
+            </button>
+
+        </div>
+    `;
+
+
+    overlay.appendChild(box);
+
+    document.body.appendChild(overlay);
+
+
+    const closeButton =
+        document.getElementById(
+            "authMessageButton"
+        );
+
+
+    closeButton.addEventListener(
+        "click",
+        function () {
+
+            overlay.remove();
+
+            if (typeof onClose === "function") {
+                onClose();
+            }
+
+        }
+    );
+
+
+    overlay.addEventListener(
+        "click",
+        function (event) {
+
+            if (event.target === overlay) {
+
+                overlay.remove();
+
+                if (typeof onClose === "function") {
+                    onClose();
+                }
+
+            }
+
+        }
+    );
+}
+
+
 // =====================================================
 // SIGN UP
 // =====================================================
@@ -91,8 +226,10 @@ if (signupForm) {
 
             if (password.length < 8) {
 
-                alert(
-                    "Password must be at least 8 characters long."
+                showAuthMessage(
+                    "Password Error",
+                    "Password must be at least 8 characters long.",
+                    "error"
                 );
 
                 return;
@@ -101,8 +238,10 @@ if (signupForm) {
 
             if (password !== confirmPassword) {
 
-                alert(
-                    "Passwords do not match."
+                showAuthMessage(
+                    "Password Error",
+                    "Passwords do not match.",
+                    "error"
                 );
 
                 return;
@@ -155,9 +294,11 @@ if (signupForm) {
 
                 if (!response.ok) {
 
-                    alert(
+                    showAuthMessage(
+                        "Account Error",
                         data.message ||
-                        "Unable to create account."
+                        "Unable to create account.",
+                        "error"
                     );
 
                     return;
@@ -168,15 +309,50 @@ if (signupForm) {
                 // SUCCESS
                 // -------------------------------------
 
-                alert(
-                    "Account created successfully! 🎉"
+                showAuthMessage(
+                    "Account Created",
+                    "Your account was created successfully! 🎉",
+                    "success",
+                    "Continue",
+                    function () {
+
+                        // Save login status
+
+                        localStorage.setItem(
+                            "usaLoggedIn",
+                            "true"
+                        );
+
+
+                        localStorage.setItem(
+                            "buyBuddyLoggedIn",
+                            "true"
+                        );
+
+
+                        // Save user information
+
+                        localStorage.setItem(
+                            "usaUser",
+                            JSON.stringify(data.user)
+                        );
+
+
+                        localStorage.setItem(
+                            "buyBuddyUser",
+                            JSON.stringify(data.user)
+                        );
+
+
+                        // -------------------------------------
+                        // GO DIRECTLY TO DASHBOARD
+                        // -------------------------------------
+
+                        window.location.href =
+                            "/Pages/home/home.html";
+
+                    }
                 );
-
-
-                // Go to login page
-
-                window.location.href =
-                    "/login.html";
 
             }
 
@@ -188,8 +364,10 @@ if (signupForm) {
                     error
                 );
 
-                alert(
-                    "Unable to connect to USA server."
+                showAuthMessage(
+                    "Connection Error",
+                    "Unable to connect to the USA server.",
+                    "error"
                 );
 
             }
@@ -240,8 +418,10 @@ if (loginForm) {
 
             if (!email || !password) {
 
-                alert(
-                    "Please enter your email and password."
+                showAuthMessage(
+                    "Login Error",
+                    "Please enter your email and password.",
+                    "error"
                 );
 
                 return;
@@ -288,9 +468,11 @@ if (loginForm) {
 
                 if (!response.ok) {
 
-                    alert(
+                    showAuthMessage(
+                        "Login Error",
                         data.message ||
-                        "Login failed."
+                        "Incorrect email or password.",
+                        "error"
                     );
 
                     return;
@@ -304,23 +486,30 @@ if (loginForm) {
                 if (data.success) {
 
                     // Save login status
+
                     localStorage.setItem(
                         "usaLoggedIn",
                         "true"
                     );
 
 
+                    localStorage.setItem(
+                        "buyBuddyLoggedIn",
+                        "true"
+                    );
+
+
                     // Save user information
+
                     localStorage.setItem(
                         "usaUser",
                         JSON.stringify(data.user)
                     );
 
 
-                    alert(
-                        "Welcome back, " +
-                        data.user.firstName +
-                        "! 🛍️"
+                    localStorage.setItem(
+                        "buyBuddyUser",
+                        JSON.stringify(data.user)
                     );
 
 
@@ -343,8 +532,10 @@ if (loginForm) {
                     error
                 );
 
-                alert(
-                    "Unable to connect to USA server."
+                showAuthMessage(
+                    "Connection Error",
+                    "Unable to connect to the USA server.",
+                    "error"
                 );
 
             }

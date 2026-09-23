@@ -5,11 +5,34 @@ import secrets
 import hashlib
 import hmac
 import re
+import json
+import html as htmlmod
+import time
+import requests
+from urllib.parse import urljoin, urlparse
+from dotenv import load_dotenv
 
 try:
     from werkzeug.security import check_password_hash
 except ImportError:
     check_password_hash = None
+
+
+# =========================================================
+# TINYFISH CONFIGURATION
+# =========================================================
+
+load_dotenv()
+
+TINYFISH_API_KEY = os.getenv("TINYFISH_API_KEY")
+
+if not TINYFISH_API_KEY:
+    raise RuntimeError(
+        "TINYFISH_API_KEY was not found in backend/.env"
+    )
+
+TINYFISH_SEARCH_URL = "https://api.search.tinyfish.ai"
+TINYFISH_FETCH_URL = "https://api.fetch.tinyfish.ai"
 
 
 # =========================================================
@@ -51,15 +74,1191 @@ app = Flask(__name__)
 
 
 # =========================================================
+# TINYFISH SEARCH
+# =========================================================
+
+def tinyfish_search(
+    query,
+    location="PK",
+    language="en",
+    page=0
+):
+    """Search the live web using TinyFish."""
+
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                TINYFISH_SEARCH_URL,
+                params={
+                    "query": query,
+                    "location": location,
+                    "language": language,
+                    "page": page
+                },
+                headers={
+                    "X-API-Key": TINYFISH_API_KEY
+                },
+                timeout=30
+            )
+
+            if response.status_code == 429:
+                retry_after = response.headers.get(
+                    "Retry-After"
+                )
+
+                try:
+                    wait_seconds = int(
+                        retry_after
+                    )
+                except (TypeError, ValueError):
+                    wait_seconds = 5 * (attempt + 1)
+
+                wait_seconds = max(
+                    1,
+                    min(wait_seconds, 20)
+                )
+
+                print(
+                    "TINYFISH SEARCH RATE LIMITED. "
+                    f"Waiting {wait_seconds} seconds..."
+                )
+
+                time.sleep(wait_seconds)
+                continue
+
+            response.raise_for_status()
+
+            result = response.json()
+
+            if isinstance(result, dict):
+                return result
+
+            return {
+                "results": []
+            }
+
+        except requests.RequestException as error:
+            print(
+                "TINYFISH SEARCH ERROR:",
+                error
+            )
+
+            if attempt == 2:
+                return None
+
+            time.sleep(2)
+
+        except ValueError as error:
+            print(
+                "TINYFISH SEARCH JSON ERROR:",
+                error
+            )
+            return None
+
+    return None
+
+
+# =========================================================
+# TINYFISH FETCH
+# =========================================================
+
+def tinyfish_fetch(
+    urls,
+    image_links=True
+):
+    """Fetch live product pages from TinyFish."""
+
+    if not isinstance(urls, list):
+        urls = [urls]
+
+    cleaned_urls = []
+
+    for url in urls:
+        if not isinstance(url, str):
+            continue
+
+        url = url.strip()
+
+        if not url:
+            continue
+
+        if url not in cleaned_urls:
+            cleaned_urls.append(url)
+
+    # TinyFish fetch limit
+    cleaned_urls = cleaned_urls[:10]
+
+    if not cleaned_urls:
+        return {
+            "results": [],
+            "errors": []
+        }
+
+    try:
+        response = requests.post(
+            TINYFISH_FETCH_URL,
+            json={
+                "urls": cleaned_urls,
+                "format": "html",
+                "links": True,
+                "image_links": image_links
+            },
+            headers={
+                "X-API-Key": TINYFISH_API_KEY,
+                "Content-Type": "application/json"
+            },
+            timeout=150
+        )
+
+        response.raise_for_status()
+
+        result = response.json()
+
+        if isinstance(result, dict):
+            return result
+
+        return {
+            "results": []
+        }
+
+    except requests.RequestException as error:
+        print(
+            "TINYFISH FETCH ERROR:",
+            error
+        )
+        return None
+
+    except ValueError as error:
+        print(
+            "TINYFISH FETCH JSON ERROR:",
+            error
+        )
+        return None
+
+
+# =========================================================
+# IMAGE HELPERS
+# =========================================================
+
+def _normalize_image_url(
+    image_url,
+    page_url=""
+):
+    if not isinstance(
+        image_url,
+        str
+    ):
+        return ""
+
+    image_url = htmlmod.unescape(
+        image_url
+    ).strip().strip('"').strip("'")
+
+    if not image_url:
+        return ""
+
+    if image_url.startswith("//"):
+        image_url = "https:" + image_url
+
+    elif page_url:
+        image_url = urljoin(
+            page_url,
+            image_url
+        )
+
+    if not image_url.startswith(
+        ("http://", "https://")
+    ):
+        return ""
+
+    return image_url
+
+
+def _image_is_blocked(image_url):
+    if not isinstance(
+        image_url,
+        str
+    ):
+        return True
+
+    lowered = image_url.lower()
+
+    blocked_words = (
+        "logo",
+        "favicon",
+        "sprite",
+        "avatar",
+        "placeholder",
+        "tracking",
+        "pixel",
+        "payment",
+        "facebook",
+        "instagram",
+        "twitter",
+        "youtube",
+        "tiktok",
+        "linkedin"
+    )
+
+    return any(
+        word in lowered
+        for word in blocked_words
+    )
+
+
+def _extract_jsonld_product(
+    html_content
+):
+    """
+    Extract Product objects from JSON-LD.
+    """
+
+    if not isinstance(
+        html_content,
+        str
+    ):
+        return []
+
+    if not html_content.strip():
+        return []
+
+    scripts = re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>'
+        r'(.*?)'
+        r'</script>',
+        html_content,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
+    products = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+
+        if not isinstance(node, dict):
+            return
+
+        node_type = node.get(
+            "@type",
+            ""
+        )
+
+        if isinstance(
+            node_type,
+            list
+        ):
+            types = {
+                str(value).lower()
+                for value in node_type
+            }
+        else:
+            types = {
+                str(node_type).lower()
+            }
+
+        if "product" in types:
+            products.append(node)
+
+        for value in node.values():
+            if isinstance(
+                value,
+                (dict, list)
+            ):
+                walk(value)
+
+    for raw_script in scripts:
+        raw_script = raw_script.strip()
+
+        if not raw_script:
+            continue
+
+        try:
+            parsed = json.loads(
+                raw_script
+            )
+            walk(parsed)
+
+        except (
+            json.JSONDecodeError,
+            TypeError,
+            ValueError
+        ):
+            continue
+
+    return products
+
+
+def _extract_jsonld_product_name(
+    html_content
+):
+    products = _extract_jsonld_product(
+        html_content
+    )
+
+    for product in products:
+        name = product.get(
+            "name"
+        )
+
+        if isinstance(
+            name,
+            str
+        ):
+            name = name.strip()
+
+            if name:
+                return name
+
+    return ""
+
+
+def _extract_jsonld_product_images(
+    html_content,
+    page_url=""
+):
+    products = _extract_jsonld_product(
+        html_content
+    )
+
+    images = []
+
+    for product in products:
+        product_image = product.get(
+            "image"
+        )
+
+        values = []
+
+        if isinstance(
+            product_image,
+            str
+        ):
+            values.append(
+                product_image
+            )
+
+        elif isinstance(
+            product_image,
+            list
+        ):
+            for value in product_image:
+                if isinstance(
+                    value,
+                    str
+                ):
+                    values.append(value)
+
+                elif isinstance(
+                    value,
+                    dict
+                ):
+                    image_url = (
+                        value.get("url")
+                        or value.get("contentUrl")
+                    )
+
+                    if isinstance(
+                        image_url,
+                        str
+                    ):
+                        values.append(
+                            image_url
+                        )
+
+        elif isinstance(
+            product_image,
+            dict
+        ):
+            image_url = (
+                product_image.get("url")
+                or product_image.get("contentUrl")
+            )
+
+            if isinstance(
+                image_url,
+                str
+            ):
+                values.append(
+                    image_url
+                )
+
+        for value in values:
+            normalized = _normalize_image_url(
+                value,
+                page_url
+            )
+
+            if not normalized:
+                continue
+
+            if _image_is_blocked(
+                normalized
+            ):
+                continue
+
+            if normalized not in images:
+                images.append(
+                    normalized
+                )
+
+    return images
+
+
+def choose_product_image(
+    image_links,
+    product_title="",
+    page_html="",
+    page_url=""
+):
+    """
+    Prefer Product.image from JSON-LD.
+    Fall back to TinyFish image links.
+    """
+
+    structured_images = (
+        _extract_jsonld_product_images(
+            page_html,
+            page_url
+        )
+    )
+
+    if structured_images:
+        return structured_images[0]
+
+    if not isinstance(
+        image_links,
+        list
+    ):
+        return ""
+
+    title_words = {
+        word.lower()
+        for word in re.findall(
+            r"[a-zA-Z0-9]+",
+            product_title
+        )
+        if len(word) >= 3
+    }
+
+    candidates = []
+
+    for image_url in image_links:
+        normalized = _normalize_image_url(
+            image_url,
+            page_url
+        )
+
+        if not normalized:
+            continue
+
+        if _image_is_blocked(
+            normalized
+        ):
+            continue
+
+        lowered = normalized.lower()
+
+        score = 0
+
+        for word in title_words:
+            if word in lowered:
+                score += 5
+
+        if any(
+            extension in lowered
+            for extension in (
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+                ".avif"
+            )
+        ):
+            score += 3
+
+        if any(
+            word in lowered
+            for word in (
+                "product",
+                "item",
+                "catalog",
+                "sku"
+            )
+        ):
+            score += 3
+
+        candidates.append(
+            (
+                score,
+                normalized
+            )
+        )
+
+    if not candidates:
+        return ""
+
+    candidates.sort(
+        key=lambda item: item[0],
+        reverse=True
+    )
+
+    return candidates[0][1]
+
+
+# =========================================================
+# PRICE HELPERS
+# =========================================================
+
+def _money_to_float(value):
+    if value is None:
+        return None
+
+    cleaned = str(
+        value
+    ).strip()
+
+    cleaned = cleaned.replace(
+        ",",
+        ""
+    )
+
+    cleaned = re.sub(
+        r"[^\d.]",
+        "",
+        cleaned
+    )
+
+    if not cleaned:
+        return None
+
+    try:
+        amount = float(
+            cleaned
+        )
+
+    except ValueError:
+        return None
+
+    if amount <= 0:
+        return None
+
+    if amount > 10000000:
+        return None
+
+    return amount
+
+
+def extract_product_price(
+    text,
+    page_html=""
+):
+    """
+    Extract the current product price.
+
+    Priority:
+    1. JSON-LD Product / Offer
+    2. Currency values
+    3. Price labels
+    """
+
+    # -----------------------------------------------------
+    # JSON-LD PRICE
+    # -----------------------------------------------------
+
+    products = _extract_jsonld_product(
+        page_html
+    )
+
+    structured_prices = []
+
+    def extract_offer_price(
+        offer
+    ):
+        if not isinstance(
+            offer,
+            dict
+        ):
+            return
+
+        price = offer.get(
+            "price"
+        )
+
+        amount = _money_to_float(
+            price
+        )
+
+        if amount is not None:
+            structured_prices.append(
+                amount
+            )
+
+        specification = offer.get(
+            "priceSpecification"
+        )
+
+        if isinstance(
+            specification,
+            dict
+        ):
+            amount = _money_to_float(
+                specification.get("price")
+            )
+
+            if amount is not None:
+                structured_prices.append(
+                    amount
+                )
+
+    for product in products:
+        offers = product.get(
+            "offers"
+        )
+
+        if isinstance(
+            offers,
+            dict
+        ):
+            extract_offer_price(
+                offers
+            )
+
+        elif isinstance(
+            offers,
+            list
+        ):
+            for offer in offers:
+                extract_offer_price(
+                    offer
+                )
+
+    if structured_prices:
+        return structured_prices[0]
+
+    # -----------------------------------------------------
+    # NORMALIZE TEXT
+    # -----------------------------------------------------
+
+    if not isinstance(
+        text,
+        str
+    ):
+        text = ""
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+    if not text:
+        return None
+
+    # -----------------------------------------------------
+    # CURRENCY PATTERNS
+    # -----------------------------------------------------
+
+    patterns = [
+        # PKR
+        r"\bPKR\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+        r"\bRs\.?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*PKR",
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*Rs\.?",
+
+        # USD
+        r"\$\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+        r"\bUSD\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        # INR
+        r"₹\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        # AED
+        r"\bAED\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        # SAR
+        r"\bSAR\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        # EUR
+        r"€\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        # GBP
+        r"£\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        # THB
+        r"฿\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)"
+    ]
+
+    candidates = []
+
+    for pattern in patterns:
+        for match in re.finditer(
+            pattern,
+            text,
+            re.IGNORECASE
+        ):
+            amount = _money_to_float(
+                match.group(1)
+            )
+
+            if amount is None:
+                continue
+
+            start = max(
+                0,
+                match.start() - 100
+            )
+
+            end = min(
+                len(text),
+                match.end() + 100
+            )
+
+            context = text[
+                start:end
+            ].lower()
+
+            score = 0
+
+            positive_words = (
+                "price",
+                "sale",
+                "selling",
+                "current",
+                "now",
+                "buy",
+                "cart",
+                "in stock",
+                "available"
+            )
+
+            negative_words = (
+                "save",
+                "you save",
+                "discount",
+                "shipping",
+                "delivery",
+                "per month",
+                "monthly",
+                "reviews",
+                "rating",
+                "sku",
+                "model",
+                "off"
+            )
+
+            for word in positive_words:
+                if word in context:
+                    score += 4
+
+            for word in negative_words:
+                if word in context:
+                    score -= 5
+
+            if amount >= 10:
+                score += 2
+
+            if amount >= 50:
+                score += 1
+
+            candidates.append(
+                (
+                    score,
+                    amount,
+                    match.start()
+                )
+            )
+
+    if candidates:
+        candidates.sort(
+            key=lambda item: (
+                item[0],
+                -item[2]
+            ),
+            reverse=True
+        )
+
+        return candidates[0][1]
+
+    # -----------------------------------------------------
+    # PRICE LABELS
+    # -----------------------------------------------------
+
+    price_patterns = [
+        r"(?:current\s+)?price\s*[:\-]?\s*"
+        r"(?:PKR|Rs\.?|USD|AED|SAR|₹|\$|€|£)?\s*"
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        r"(?:sale|selling|our)\s+price\s*[:\-]?\s*"
+        r"(?:PKR|Rs\.?|USD|AED|SAR|₹|\$|€|£)?\s*"
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)"
+    ]
+
+    for pattern in price_patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if not match:
+            continue
+
+        amount = _money_to_float(
+            match.group(1)
+        )
+
+        if amount is not None:
+            return amount
+
+    return None
+
+
+def extract_old_price(
+    text,
+    current_price=None
+):
+    if not isinstance(
+        text,
+        str
+    ):
+        return None
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
+
+    patterns = [
+        r"(?:was|original price|regular price|list price)"
+        r"\s*[:\-]?\s*(?:PKR|Rs\.?|USD|AED|SAR|₹|\$|€|£)?\s*"
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+
+        r"(?:MSRP|RRP)"
+        r"\s*[:\-]?\s*(?:PKR|Rs\.?|USD|AED|SAR|₹|\$|€|£)?\s*"
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if not match:
+            continue
+
+        amount = _money_to_float(
+            match.group(1)
+        )
+
+        if amount is None:
+            continue
+
+        if (
+            current_price is None
+            or amount > current_price
+        ):
+            return amount
+
+    return None
+
+
+def extract_product_rating(
+    text
+):
+    if not isinstance(
+        text,
+        str
+    ):
+        return None
+
+    patterns = [
+        r"([0-5](?:\.[0-9])?)\s*(?:out of|/)\s*5",
+        r"(?:rating|rated)\s*[:\-]?\s*"
+        r"([0-5](?:\.[0-9])?)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if not match:
+            continue
+
+        try:
+            rating = float(
+                match.group(1)
+            )
+        except ValueError:
+            continue
+
+        if 0 <= rating <= 5:
+            return rating
+
+    return None
+
+
+# =========================================================
+# PRODUCT PAGE VALIDATION
+# =========================================================
+
+def _page_is_valid_product_page(
+    page
+):
+    """
+    Strictly reject inaccessible/non-product pages.
+    """
+
+    if not isinstance(
+        page,
+        dict
+    ):
+        return False
+
+    title = page.get(
+        "title",
+        ""
+    )
+
+    text = page.get(
+        "text",
+        ""
+    )
+
+    html_content = page.get(
+        "html",
+        ""
+    )
+
+    combined = " ".join(
+        value
+        for value in (
+            title,
+            text,
+            html_content
+        )
+        if isinstance(
+            value,
+            str
+        )
+    ).lower()
+
+    if not combined.strip():
+        return False
+
+    blocked_signals = (
+        "access denied",
+        "403 forbidden",
+        "forbidden",
+        "request blocked",
+        "access blocked",
+        "captcha",
+        "verify you are human",
+        "robot check",
+        "temporarily unavailable",
+        "page not found",
+        "404 not found",
+        "something went wrong"
+    )
+
+    if any(
+        signal in combined
+        for signal in blocked_signals
+    ):
+        return False
+
+    # JSON-LD Product is strong evidence.
+    if _extract_jsonld_product(
+        html_content
+    ):
+        return True
+
+    product_signals = (
+        "add to cart",
+        "add to bag",
+        "buy now",
+        "in stock",
+        "availability",
+        "sku",
+        "product details",
+        "product description",
+        "quantity",
+        "select size",
+        "select color"
+    )
+
+    signal_count = sum(
+        1
+        for signal in product_signals
+        if signal in combined
+    )
+
+    return signal_count >= 2
+
+
+# =========================================================
+# FETCHED PAGE DATA
+# =========================================================
+
+def get_fetched_page_data(
+    fetch_result
+):
+    pages = {}
+
+    if not isinstance(
+        fetch_result,
+        dict
+    ):
+        return pages
+
+    results = fetch_result.get(
+        "results",
+        []
+    )
+
+    if not isinstance(
+        results,
+        list
+    ):
+        return pages
+
+    for page in results:
+        if not isinstance(
+            page,
+            dict
+        ):
+            continue
+
+        page_url = page.get(
+            "url",
+            ""
+        )
+
+        final_url = page.get(
+            "final_url",
+            ""
+        )
+
+        page_html = page.get(
+            "html",
+            ""
+        )
+
+        page_text = page.get(
+            "text",
+            ""
+        )
+
+        if not isinstance(
+            page_html,
+            str
+        ):
+            page_html = ""
+
+        if not isinstance(
+            page_text,
+            str
+        ):
+            page_text = ""
+
+        if not page_text:
+            page_text = page.get(
+                "markdown",
+                ""
+            )
+
+        if not isinstance(
+            page_text,
+            str
+        ):
+            page_text = ""
+
+        if not page_text:
+            page_text = page_html
+
+        valid = _page_is_valid_product_page(
+            page
+        )
+
+        if not valid:
+            continue
+
+        page_title = page.get(
+            "title",
+            ""
+        )
+
+        if not isinstance(
+            page_title,
+            str
+        ):
+            page_title = ""
+
+        page_title = page_title.strip()
+
+        structured_name = (
+            _extract_jsonld_product_name(
+                page_html
+            )
+        )
+
+        product_name = (
+            structured_name
+            or page_title
+        )
+
+        image = choose_product_image(
+            page.get(
+                "image_links",
+                []
+            ),
+            product_name,
+            page_html=page_html,
+            page_url=final_url or page_url
+        )
+
+        # Exact product image is required.
+        if not image:
+            continue
+
+        data = {
+            "image": image,
+            "text": page_text,
+            "html": page_html,
+            "title": page_title,
+            "product_name": product_name,
+            "url": page_url,
+            "final_url": final_url
+        }
+
+        if page_url:
+            pages[page_url] = data
+
+        if final_url:
+            pages[final_url] = data
+
+    return pages
+
+
+# =========================================================
 # PASSWORD SECURITY
 # =========================================================
 
-PBKDF2_ITERATIONS = 600_000
+PBKDF2_ITERATIONS = 600000
 SALT_LENGTH = 32
 
 
-def create_password_hash(password):
-
+def create_password_hash(
+    password
+):
     salt = secrets.token_bytes(
         SALT_LENGTH
     )
@@ -71,7 +1270,10 @@ def create_password_hash(password):
         PBKDF2_ITERATIONS
     ).hex()
 
-    return password_hash, salt.hex()
+    return (
+        password_hash,
+        salt.hex()
+    )
 
 
 def verify_password(
@@ -79,9 +1281,7 @@ def verify_password(
     stored_hash,
     stored_salt
 ):
-
     try:
-
         salt = bytes.fromhex(
             stored_salt
         )
@@ -99,16 +1299,14 @@ def verify_password(
         )
 
     except Exception:
-
         return False
 
 
 # =========================================================
-# DATABASE CONNECTION
+# DATABASE
 # =========================================================
 
 def get_db_connection():
-
     connection = sqlite3.connect(
         DATABASE_PATH
     )
@@ -118,894 +1316,29 @@ def get_db_connection():
     return connection
 
 
-# =========================================================
-# PRODUCTS
-# =========================================================
-
-PRODUCTS = [
-    {
-        "name": "Wireless Keyboard",
-        "brand": "Logitech",
-        "category": "Tech",
-        "price": 29,
-        "old_price": 45,
-        "rating": 4.6,
-        "value": 94,
-        "icon": "⌨️",
-        "best": True
-    },
-    {
-        "name": "USB-C Hub",
-        "brand": "Anker",
-        "category": "Tech",
-        "price": 24,
-        "old_price": 39,
-        "rating": 4.5,
-        "value": 92,
-        "icon": "🔌",
-        "best": True
-    },
-    {
-        "name": "Portable SSD",
-        "brand": "Samsung",
-        "category": "Tech",
-        "price": 69,
-        "old_price": 99,
-        "rating": 4.7,
-        "value": 95,
-        "icon": "💾",
-        "best": True
-    },
-    {
-        "name": "Wireless Mouse",
-        "brand": "Logitech",
-        "category": "Tech",
-        "price": 19,
-        "old_price": 29,
-        "rating": 4.5,
-        "value": 93,
-        "icon": "🖱️",
-        "best": False
-    },
-
-    {
-        "name": "Galaxy A Series",
-        "brand": "Samsung",
-        "category": "Smartphones",
-        "price": 249,
-        "old_price": 299,
-        "rating": 4.5,
-        "value": 91,
-        "icon": "📱",
-        "best": True
-    },
-    {
-        "name": "Redmi Note Series",
-        "brand": "Xiaomi",
-        "category": "Smartphones",
-        "price": 199,
-        "old_price": 249,
-        "rating": 4.4,
-        "value": 94,
-        "icon": "📱",
-        "best": True
-    },
-    {
-        "name": "Moto G Series",
-        "brand": "Motorola",
-        "category": "Smartphones",
-        "price": 179,
-        "old_price": 229,
-        "rating": 4.3,
-        "value": 90,
-        "icon": "📱",
-        "best": False
-    },
-    {
-        "name": "Pixel A Series",
-        "brand": "Google",
-        "category": "Smartphones",
-        "price": 399,
-        "old_price": 449,
-        "rating": 4.7,
-        "value": 93,
-        "icon": "📱",
-        "best": True
-    },
-
-    {
-        "name": "IdeaPad Slim",
-        "brand": "Lenovo",
-        "category": "Laptops",
-        "price": 499,
-        "old_price": 599,
-        "rating": 4.5,
-        "value": 94,
-        "icon": "💻",
-        "best": True
-    },
-    {
-        "name": "Inspiron",
-        "brand": "Dell",
-        "category": "Laptops",
-        "price": 549,
-        "old_price": 699,
-        "rating": 4.4,
-        "value": 92,
-        "icon": "💻",
-        "best": True
-    },
-    {
-        "name": "Pavilion",
-        "brand": "HP",
-        "category": "Laptops",
-        "price": 599,
-        "old_price": 749,
-        "rating": 4.5,
-        "value": 91,
-        "icon": "💻",
-        "best": False
-    },
-    {
-        "name": "Aspire",
-        "brand": "Acer",
-        "category": "Laptops",
-        "price": 429,
-        "old_price": 549,
-        "rating": 4.3,
-        "value": 95,
-        "icon": "💻",
-        "best": True
-    },
-
-    {
-        "name": "Smart Plug",
-        "brand": "TP-Link",
-        "category": "Gadgets",
-        "price": 15,
-        "old_price": 22,
-        "rating": 4.5,
-        "value": 94,
-        "icon": "🔌",
-        "best": True
-    },
-    {
-        "name": "Smart Tracker",
-        "brand": "Tile",
-        "category": "Gadgets",
-        "price": 24,
-        "old_price": 34,
-        "rating": 4.4,
-        "value": 90,
-        "icon": "📍",
-        "best": False
-    },
-    {
-        "name": "Mini Power Bank",
-        "brand": "Anker",
-        "category": "Gadgets",
-        "price": 29,
-        "old_price": 45,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "🔋",
-        "best": True
-    },
-    {
-        "name": "USB Desk Fan",
-        "brand": "Baseus",
-        "category": "Gadgets",
-        "price": 18,
-        "old_price": 27,
-        "rating": 4.2,
-        "value": 89,
-        "icon": "🌀",
-        "best": False
-    },
-
-    {
-        "name": "Gaming Console",
-        "brand": "Sony",
-        "category": "Gaming",
-        "price": 449,
-        "old_price": 499,
-        "rating": 4.8,
-        "value": 91,
-        "icon": "🎮",
-        "best": True
-    },
-    {
-        "name": "Gaming Console",
-        "brand": "Microsoft",
-        "category": "Gaming",
-        "price": 399,
-        "old_price": 449,
-        "rating": 4.7,
-        "value": 93,
-        "icon": "🎮",
-        "best": True
-    },
-    {
-        "name": "Handheld Gaming Device",
-        "brand": "Nintendo",
-        "category": "Gaming",
-        "price": 299,
-        "old_price": 349,
-        "rating": 4.7,
-        "value": 92,
-        "icon": "🎮",
-        "best": False
-    },
-    {
-        "name": "Budget Gaming Console",
-        "brand": "Retro",
-        "category": "Gaming",
-        "price": 79,
-        "old_price": 109,
-        "rating": 4.3,
-        "value": 96,
-        "icon": "🎮",
-        "best": True
-    },
-
-    {
-        "name": "Mechanical Gaming Keyboard",
-        "brand": "Redragon",
-        "category": "Gaming Accessories",
-        "price": 45,
-        "old_price": 69,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "⌨️",
-        "best": True
-    },
-    {
-        "name": "Gaming Mouse",
-        "brand": "Logitech",
-        "category": "Gaming Accessories",
-        "price": 39,
-        "old_price": 59,
-        "rating": 4.7,
-        "value": 94,
-        "icon": "🖱️",
-        "best": True
-    },
-    {
-        "name": "Gaming Headset",
-        "brand": "HyperX",
-        "category": "Gaming Accessories",
-        "price": 49,
-        "old_price": 79,
-        "rating": 4.6,
-        "value": 93,
-        "icon": "🎧",
-        "best": False
-    },
-    {
-        "name": "Gaming Mouse Pad",
-        "brand": "SteelSeries",
-        "category": "Gaming Accessories",
-        "price": 25,
-        "old_price": 39,
-        "rating": 4.5,
-        "value": 91,
-        "icon": "🖱️",
-        "best": False
-    },
-
-    {
-        "name": "Wireless Earbuds",
-        "brand": "Soundcore",
-        "category": "Headphones & Audio",
-        "price": 39,
-        "old_price": 59,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "🎧",
-        "best": True
-    },
-    {
-        "name": "Noise Cancelling Headphones",
-        "brand": "Sony",
-        "category": "Headphones & Audio",
-        "price": 199,
-        "old_price": 249,
-        "rating": 4.8,
-        "value": 93,
-        "icon": "🎧",
-        "best": True
-    },
-    {
-        "name": "Bluetooth Speaker",
-        "brand": "JBL",
-        "category": "Headphones & Audio",
-        "price": 59,
-        "old_price": 79,
-        "rating": 4.7,
-        "value": 94,
-        "icon": "🔊",
-        "best": True
-    },
-    {
-        "name": "Budget Earbuds",
-        "brand": "JLab",
-        "category": "Headphones & Audio",
-        "price": 25,
-        "old_price": 35,
-        "rating": 4.3,
-        "value": 96,
-        "icon": "🎧",
-        "best": True
-    },
-
-    {
-        "name": "Hair Dryer",
-        "brand": "Remington",
-        "category": "Beauty",
-        "price": 39,
-        "old_price": 55,
-        "rating": 4.5,
-        "value": 92,
-        "icon": "💇",
-        "best": True
-    },
-    {
-        "name": "Hair Straightener",
-        "brand": "Revlon",
-        "category": "Beauty",
-        "price": 29,
-        "old_price": 45,
-        "rating": 4.4,
-        "value": 94,
-        "icon": "💇",
-        "best": True
-    },
-    {
-        "name": "Makeup Brush Set",
-        "brand": "Real Techniques",
-        "category": "Beauty",
-        "price": 22,
-        "old_price": 35,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "💄",
-        "best": True
-    },
-    {
-        "name": "LED Vanity Mirror",
-        "brand": "Conair",
-        "category": "Beauty",
-        "price": 35,
-        "old_price": 49,
-        "rating": 4.4,
-        "value": 90,
-        "icon": "🪞",
-        "best": False
-    },
-
-    {
-        "name": "Daily Moisturizer",
-        "brand": "CeraVe",
-        "category": "Skincare",
-        "price": 16,
-        "old_price": 20,
-        "rating": 4.8,
-        "value": 96,
-        "icon": "🧴",
-        "best": True
-    },
-    {
-        "name": "Gentle Cleanser",
-        "brand": "CeraVe",
-        "category": "Skincare",
-        "price": 14,
-        "old_price": 18,
-        "rating": 4.7,
-        "value": 95,
-        "icon": "🧴",
-        "best": True
-    },
-    {
-        "name": "Hydrating Serum",
-        "brand": "The Ordinary",
-        "category": "Skincare",
-        "price": 12,
-        "old_price": 16,
-        "rating": 4.6,
-        "value": 97,
-        "icon": "🧴",
-        "best": True
-    },
-    {
-        "name": "Sunscreen",
-        "brand": "Neutrogena",
-        "category": "Skincare",
-        "price": 13,
-        "old_price": 18,
-        "rating": 4.5,
-        "value": 94,
-        "icon": "☀️",
-        "best": True
-    },
-
-    {
-        "name": "Air Fryer",
-        "brand": "Cosori",
-        "category": "Home Appliances",
-        "price": 79,
-        "old_price": 109,
-        "rating": 4.7,
-        "value": 95,
-        "icon": "🍟",
-        "best": True
-    },
-    {
-        "name": "Robot Vacuum",
-        "brand": "Eufy",
-        "category": "Home Appliances",
-        "price": 179,
-        "old_price": 249,
-        "rating": 4.5,
-        "value": 92,
-        "icon": "🤖",
-        "best": True
-    },
-    {
-        "name": "Electric Kettle",
-        "brand": "Hamilton Beach",
-        "category": "Home Appliances",
-        "price": 29,
-        "old_price": 39,
-        "rating": 4.6,
-        "value": 96,
-        "icon": "🫖",
-        "best": True
-    },
-    {
-        "name": "Tower Fan",
-        "brand": "Honeywell",
-        "category": "Home Appliances",
-        "price": 49,
-        "old_price": 69,
-        "rating": 4.4,
-        "value": 91,
-        "icon": "🌀",
-        "best": False
-    },
-
-    {
-        "name": "Non-Stick Pan",
-        "brand": "T-fal",
-        "category": "Kitchen",
-        "price": 29,
-        "old_price": 45,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "🍳",
-        "best": True
-    },
-    {
-        "name": "Blender",
-        "brand": "Ninja",
-        "category": "Kitchen",
-        "price": 69,
-        "old_price": 99,
-        "rating": 4.7,
-        "value": 94,
-        "icon": "🥤",
-        "best": True
-    },
-    {
-        "name": "Coffee Maker",
-        "brand": "Hamilton Beach",
-        "category": "Kitchen",
-        "price": 39,
-        "old_price": 59,
-        "rating": 4.5,
-        "value": 93,
-        "icon": "☕",
-        "best": True
-    },
-    {
-        "name": "Food Storage Set",
-        "brand": "Rubbermaid",
-        "category": "Kitchen",
-        "price": 25,
-        "old_price": 35,
-        "rating": 4.6,
-        "value": 94,
-        "icon": "🥡",
-        "best": False
-    },
-
-    {
-        "name": "LED Desk Lamp",
-        "brand": "Philips",
-        "category": "Home & Living",
-        "price": 25,
-        "old_price": 39,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "💡",
-        "best": True
-    },
-    {
-        "name": "Memory Foam Pillow",
-        "brand": "Amazon Basics",
-        "category": "Home & Living",
-        "price": 24,
-        "old_price": 35,
-        "rating": 4.5,
-        "value": 94,
-        "icon": "🛏️",
-        "best": True
-    },
-    {
-        "name": "Throw Blanket",
-        "brand": "Bedsure",
-        "category": "Home & Living",
-        "price": 29,
-        "old_price": 45,
-        "rating": 4.7,
-        "value": 96,
-        "icon": "🛋️",
-        "best": True
-    },
-    {
-        "name": "Storage Organizer",
-        "brand": "Sterilite",
-        "category": "Home & Living",
-        "price": 19,
-        "old_price": 29,
-        "rating": 4.4,
-        "value": 92,
-        "icon": "📦",
-        "best": False
-    },
-
-    {
-        "name": "Classic Hoodie",
-        "brand": "Hanes",
-        "category": "Fashion",
-        "price": 25,
-        "old_price": 40,
-        "rating": 4.5,
-        "value": 94,
-        "icon": "👕",
-        "best": True
-    },
-    {
-        "name": "Everyday Sneakers",
-        "brand": "New Balance",
-        "category": "Fashion",
-        "price": 69,
-        "old_price": 89,
-        "rating": 4.6,
-        "value": 92,
-        "icon": "👟",
-        "best": True
-    },
-    {
-        "name": "Basic T-Shirt",
-        "brand": "Uniqlo",
-        "category": "Fashion",
-        "price": 15,
-        "old_price": 20,
-        "rating": 4.5,
-        "value": 96,
-        "icon": "👕",
-        "best": True
-    },
-    {
-        "name": "Casual Backpack",
-        "brand": "Jansport",
-        "category": "Fashion",
-        "price": 39,
-        "old_price": 55,
-        "rating": 4.6,
-        "value": 94,
-        "icon": "🎒",
-        "best": False
-    },
-
-    {
-        "name": "Yoga Mat",
-        "brand": "Gaiam",
-        "category": "Fitness",
-        "price": 25,
-        "old_price": 35,
-        "rating": 4.7,
-        "value": 96,
-        "icon": "🧘",
-        "best": True
-    },
-    {
-        "name": "Resistance Bands",
-        "brand": "Fit Simplify",
-        "category": "Fitness",
-        "price": 18,
-        "old_price": 27,
-        "rating": 4.6,
-        "value": 97,
-        "icon": "🏋️",
-        "best": True
-    },
-    {
-        "name": "Adjustable Dumbbells",
-        "brand": "Bowflex",
-        "category": "Fitness",
-        "price": 149,
-        "old_price": 199,
-        "rating": 4.7,
-        "value": 91,
-        "icon": "🏋️",
-        "best": True
-    },
-    {
-        "name": "Fitness Tracker",
-        "brand": "Xiaomi",
-        "category": "Fitness",
-        "price": 39,
-        "old_price": 59,
-        "rating": 4.4,
-        "value": 95,
-        "icon": "⌚",
-        "best": True
-    },
-
-    {
-        "name": "Mirrorless Camera",
-        "brand": "Sony",
-        "category": "Cameras",
-        "price": 649,
-        "old_price": 749,
-        "rating": 4.8,
-        "value": 91,
-        "icon": "📷",
-        "best": True
-    },
-    {
-        "name": "Action Camera",
-        "brand": "GoPro",
-        "category": "Cameras",
-        "price": 299,
-        "old_price": 349,
-        "rating": 4.7,
-        "value": 93,
-        "icon": "📷",
-        "best": True
-    },
-    {
-        "name": "Compact Camera",
-        "brand": "Canon",
-        "category": "Cameras",
-        "price": 299,
-        "old_price": 349,
-        "rating": 4.5,
-        "value": 90,
-        "icon": "📷",
-        "best": False
-    },
-    {
-        "name": "Instant Camera",
-        "brand": "Fujifilm",
-        "category": "Cameras",
-        "price": 69,
-        "old_price": 89,
-        "rating": 4.6,
-        "value": 94,
-        "icon": "📸",
-        "best": True
-    },
-
-    {
-        "name": "Smart Watch",
-        "brand": "Amazfit",
-        "category": "Accessories",
-        "price": 89,
-        "old_price": 119,
-        "rating": 4.5,
-        "value": 94,
-        "icon": "⌚",
-        "best": True
-    },
-    {
-        "name": "Laptop Sleeve",
-        "brand": "Tomtoc",
-        "category": "Accessories",
-        "price": 25,
-        "old_price": 35,
-        "rating": 4.7,
-        "value": 96,
-        "icon": "💼",
-        "best": True
-    },
-    {
-        "name": "Phone Stand",
-        "brand": "UGREEN",
-        "category": "Accessories",
-        "price": 15,
-        "old_price": 25,
-        "rating": 4.6,
-        "value": 95,
-        "icon": "📱",
-        "best": True
-    },
-    {
-        "name": "USB-C Cable",
-        "brand": "Anker",
-        "category": "Accessories",
-        "price": 12,
-        "old_price": 19,
-        "rating": 4.7,
-        "value": 98,
-        "icon": "🔌",
-        "best": True
-    },
-
-    {
-        "name": "Adventure Game",
-        "brand": "Digital Store",
-        "category": "Online Games",
-        "price": 29,
-        "old_price": 59,
-        "rating": 4.6,
-        "value": 94,
-        "icon": "🎮",
-        "best": True
-    },
-    {
-        "name": "Racing Game",
-        "brand": "Digital Store",
-        "category": "Online Games",
-        "price": 24,
-        "old_price": 49,
-        "rating": 4.5,
-        "value": 95,
-        "icon": "🏎️",
-        "best": True
-    },
-    {
-        "name": "Strategy Game",
-        "brand": "Digital Store",
-        "category": "Online Games",
-        "price": 19,
-        "old_price": 39,
-        "rating": 4.4,
-        "value": 96,
-        "icon": "♟️",
-        "best": True
-    },
-    {
-        "name": "Multiplayer Game",
-        "brand": "Digital Store",
-        "category": "Online Games",
-        "price": 34,
-        "old_price": 59,
-        "rating": 4.7,
-        "value": 93,
-        "icon": "🎮",
-        "best": False
-    },
-
-    {
-        "name": "Study Desk Lamp",
-        "brand": "IKEA",
-        "category": "Office & Study",
-        "price": 29,
-        "old_price": 39,
-        "rating": 4.6,
-        "value": 94,
-        "icon": "💡",
-        "best": True
-    },
-    {
-        "name": "Notebook Set",
-        "brand": "Moleskine",
-        "category": "Office & Study",
-        "price": 18,
-        "old_price": 25,
-        "rating": 4.5,
-        "value": 92,
-        "icon": "📓",
-        "best": False
-    },
-    {
-        "name": "Wireless Printer",
-        "brand": "HP",
-        "category": "Office & Study",
-        "price": 89,
-        "old_price": 119,
-        "rating": 4.4,
-        "value": 91,
-        "icon": "🖨️",
-        "best": True
-    },
-    {
-        "name": "Desk Organizer",
-        "brand": "Amazon Basics",
-        "category": "Office & Study",
-        "price": 16,
-        "old_price": 25,
-        "rating": 4.5,
-        "value": 95,
-        "icon": "📚",
-        "best": True
-    }
-]
-
-
-# =========================================================
-# DATABASE INITIALIZATION
-# =========================================================
-
 def init_database():
-
     connection = get_db_connection()
-
     cursor = connection.cursor()
 
-
-    # -----------------------------------------------------
-    # USERS TABLE
-    # -----------------------------------------------------
-
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS users (
-
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-
             first_name TEXT NOT NULL,
-
             last_name TEXT NOT NULL,
-
             email TEXT NOT NULL UNIQUE,
-
             password TEXT,
-
             password_hash TEXT,
-
             salt TEXT,
-
-            created_at
-                TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+        """
+    )
 
-
-    # -----------------------------------------------------
-    # PRODUCTS TABLE
-    # -----------------------------------------------------
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            name TEXT NOT NULL,
-
-            brand TEXT NOT NULL,
-
-            category TEXT NOT NULL,
-
-            price REAL NOT NULL,
-
-            old_price REAL,
-
-            rating REAL,
-
-            value INTEGER,
-
-            icon TEXT,
-
-            best INTEGER DEFAULT 0
-        )
-    """)
-
-
-    # -----------------------------------------------------
-    # CHECK OLD USERS TABLE
-    # -----------------------------------------------------
+    # Products remain LIVE ONLY.
+    cursor.execute(
+        "DROP TABLE IF EXISTS products"
+    )
 
     cursor.execute(
         "PRAGMA table_info(users)"
@@ -1016,155 +1349,37 @@ def init_database():
         for row in cursor.fetchall()
     }
 
-
-    # Add missing password_hash column
-
     if "password_hash" not in user_columns:
-
-        cursor.execute("""
+        cursor.execute(
+            """
             ALTER TABLE users
             ADD COLUMN password_hash TEXT
-        """)
-
-
-    # Add missing salt column
+            """
+        )
 
     if "salt" not in user_columns:
-
-        cursor.execute("""
+        cursor.execute(
+            """
             ALTER TABLE users
             ADD COLUMN salt TEXT
-        """)
-
-
-    # Add missing old password column
+            """
+        )
 
     if "password" not in user_columns:
-
-        cursor.execute("""
+        cursor.execute(
+            """
             ALTER TABLE users
             ADD COLUMN password TEXT
-        """)
-
-
-    # -----------------------------------------------------
-    # CHECK PRODUCTS
-    # -----------------------------------------------------
-
-    cursor.execute("""
-        SELECT COUNT(*) AS total
-        FROM products
-    """)
-
-    product_count = cursor.fetchone()["total"]
-
-
-    # -----------------------------------------------------
-    # INSERT PRODUCTS ONLY IF TABLE IS EMPTY
-    # -----------------------------------------------------
-
-    if product_count == 0:
-
-        for product in PRODUCTS:
-
-            cursor.execute("""
-                INSERT INTO products
-                (
-                    name,
-                    brand,
-                    category,
-                    price,
-                    old_price,
-                    rating,
-                    value,
-                    icon,
-                    best
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-
-                product["name"],
-
-                product["brand"],
-
-                product["category"],
-
-                product["price"],
-
-                product["old_price"],
-
-                product["rating"],
-
-                product["value"],
-
-                product["icon"],
-
-                1 if product["best"] else 0
-
-            ))
-
-
-        print(
-            f"Inserted {len(PRODUCTS)} products into database."
+            """
         )
-
-    else:
-
-        print(
-            f"Products table already contains "
-            f"{product_count} products."
-        )
-
 
     connection.commit()
-
     connection.close()
 
-
     print(
-        "Database initialized successfully."
+        "Database initialized successfully. "
+        "Users are stored; products are live-only."
     )
-
-
-# =========================================================
-# PRODUCT CONVERTER
-# =========================================================
-
-def product_to_dict(row):
-
-    return {
-
-        "id":
-            row["id"],
-
-        "name":
-            row["name"],
-
-        "brand":
-            row["brand"],
-
-        "category":
-            row["category"],
-
-        "price":
-            row["price"],
-
-        "oldPrice":
-            row["old_price"],
-
-        "rating":
-            row["rating"],
-
-        "value":
-            row["value"],
-
-        "icon":
-            row["icon"],
-
-        "best":
-            bool(row["best"])
-
-    }
 
 
 # =========================================================
@@ -1173,7 +1388,6 @@ def product_to_dict(row):
 
 @app.route("/")
 def index():
-
     return send_from_directory(
         FRONTEND_DIR,
         "index.html"
@@ -1185,8 +1399,9 @@ def index():
 # =========================================================
 
 @app.route("/<path:filename>")
-def frontend_files(filename):
-
+def frontend_files(
+    filename
+):
     return send_from_directory(
         FRONTEND_DIR,
         filename
@@ -1210,21 +1425,27 @@ def signup():
         ) or {}
 
 
-        first_name = data.get(
-            "firstName",
-            ""
+        first_name = str(
+            data.get(
+                "firstName",
+                ""
+            )
         ).strip()
 
 
-        last_name = data.get(
-            "lastName",
-            ""
+        last_name = str(
+            data.get(
+                "lastName",
+                ""
+            )
         ).strip()
 
 
-        email = data.get(
-            "email",
-            ""
+        email = str(
+            data.get(
+                "email",
+                ""
+            )
         ).strip().lower()
 
 
@@ -1237,60 +1458,41 @@ def signup():
         if not first_name:
 
             return jsonify({
-
                 "success": False,
-
-                "message":
-                    "First name is required."
-
+                "message": "First name is required."
             }), 400
 
 
         if not last_name:
 
             return jsonify({
-
                 "success": False,
-
-                "message":
-                    "Last name is required."
-
+                "message": "Last name is required."
             }), 400
 
 
         if not email:
 
             return jsonify({
-
                 "success": False,
-
-                "message":
-                    "Email is required."
-
+                "message": "Email is required."
             }), 400
 
 
         if not password:
 
             return jsonify({
-
                 "success": False,
-
-                "message":
-                    "Password is required."
-
+                "message": "Password is required."
             }), 400
 
 
         if len(password) < 8:
 
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "Password must be at least 8 characters."
-
             }), 400
 
 
@@ -1300,13 +1502,13 @@ def signup():
 
 
         connection = get_db_connection()
-
         cursor = connection.cursor()
 
 
         try:
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO users
                 (
                     first_name,
@@ -1316,20 +1518,15 @@ def signup():
                     salt
                 )
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-
-                first_name,
-
-                last_name,
-
-                email,
-
-                password_hash,
-
-                salt
-
-            ))
-
+                """,
+                (
+                    first_name,
+                    last_name,
+                    email,
+                    password_hash,
+                    salt
+                )
+            )
 
             connection.commit()
 
@@ -1339,12 +1536,9 @@ def signup():
             connection.rollback()
 
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "An account with this email already exists."
-
             }), 409
 
 
@@ -1354,12 +1548,14 @@ def signup():
 
 
         return jsonify({
-
             "success": True,
-
             "message":
-                "Account created successfully!"
-
+                "Account created successfully!",
+            "user": {
+                "firstName": first_name,
+                "lastName": last_name,
+                "email": email
+            }
         }), 201
 
 
@@ -1371,14 +1567,10 @@ def signup():
         )
 
         return jsonify({
-
             "success": False,
-
             "message":
                 "Something went wrong while creating your account."
-
         }), 500
-
 
 # =========================================================
 # LOGIN
@@ -1389,44 +1581,35 @@ def signup():
     methods=["POST"]
 )
 def login():
-
     try:
-
         data = request.get_json(
             silent=True
         ) or {}
 
-
-        email = data.get(
-            "email",
-            ""
+        email = str(
+            data.get(
+                "email",
+                ""
+            )
         ).strip().lower()
-
 
         password = data.get(
             "password",
             ""
         )
 
-
         if not email or not password:
-
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "Email and password are required."
-
             }), 400
 
-
         connection = get_db_connection()
-
         cursor = connection.cursor()
 
-
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 id,
                 first_name,
@@ -1437,172 +1620,110 @@ def login():
                 salt
             FROM users
             WHERE email = ?
-        """, (email,))
-
+            """,
+            (email,)
+        )
 
         user = cursor.fetchone()
 
-
         if user is None:
-
             connection.close()
 
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "Incorrect email or password."
-
             }), 401
 
+        password_correct = False
 
-        # -------------------------------------------------
-        # NEW PASSWORD SYSTEM
-        # -------------------------------------------------
-
+        # New password system.
         if (
             user["password_hash"]
-            and
-            user["salt"]
+            and user["salt"]
         ):
-
             password_correct = verify_password(
-
                 password,
-
                 user["password_hash"],
-
                 user["salt"]
-
             )
 
-
-        # -------------------------------------------------
-        # OLD PASSWORD SYSTEM
-        # -------------------------------------------------
-
+        # Old password system.
         elif (
             user["password"]
-            and
-            check_password_hash
+            and check_password_hash
         ):
-
             try:
-
                 password_correct = check_password_hash(
-
                     user["password"],
-
                     password
-
                 )
-
             except Exception:
-
                 password_correct = False
 
-
-            # -------------------------------------------------
-            # MIGRATE OLD PASSWORD TO NEW SYSTEM
-            # -------------------------------------------------
-
+            # Migrate old password.
             if password_correct:
-
-                new_hash, new_salt = create_password_hash(
-                    password
+                new_hash, new_salt = (
+                    create_password_hash(
+                        password
+                    )
                 )
 
-
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE users
-
                     SET
                         password_hash = ?,
                         salt = ?
-
                     WHERE id = ?
-                """, (
-
-                    new_hash,
-
-                    new_salt,
-
-                    user["id"]
-
-                ))
-
+                    """,
+                    (
+                        new_hash,
+                        new_salt,
+                        user["id"]
+                    )
+                )
 
                 connection.commit()
 
-
-        else:
-
-            password_correct = False
-
-
         if not password_correct:
-
             connection.close()
 
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "Incorrect email or password."
-
             }), 401
-
 
         connection.close()
 
-
         return jsonify({
-
             "success": True,
-
             "message":
                 "Login successful!",
-
             "user": {
-
-                "id":
-                    user["id"],
-
-                "firstName":
-                    user["first_name"],
-
-                "lastName":
-                    user["last_name"],
-
-                "email":
-                    user["email"]
-
+                "id": user["id"],
+                "firstName": user["first_name"],
+                "lastName": user["last_name"],
+                "email": user["email"]
             }
-
         }), 200
 
-
     except Exception as error:
-
         print(
             "LOGIN ERROR:",
             error
         )
 
         return jsonify({
-
             "success": False,
-
             "message":
                 "Something went wrong while logging in."
-
         }), 500
 
 
 # =========================================================
-# GET ALL PRODUCTS
+# PRODUCTS API COMPATIBILITY
 # =========================================================
 
 @app.route(
@@ -1610,74 +1731,11 @@ def login():
     methods=["GET"]
 )
 def get_products():
-
-    try:
-
-        connection = get_db_connection()
-
-        cursor = connection.cursor()
-
-
-        cursor.execute("""
-            SELECT
-                id,
-                name,
-                brand,
-                category,
-                price,
-                old_price,
-                rating,
-                value,
-                icon,
-                best
-            FROM products
-
-            ORDER BY
-                value DESC,
-                rating DESC,
-                price ASC
-        """)
-
-
-        rows = cursor.fetchall()
-
-        connection.close()
-
-
-        products = [
-
-            product_to_dict(row)
-
-            for row in rows
-
-        ]
-
-
-        return jsonify({
-
-            "success": True,
-
-            "products":
-                products
-
-        })
-
-
-    except Exception as error:
-
-        print(
-            "PRODUCT API ERROR:",
-            error
-        )
-
-        return jsonify({
-
-            "success": False,
-
-            "message":
-                "Could not load products."
-
-        }), 500
+    return jsonify({
+        "success": True,
+        "products": [],
+        "source": "live-only"
+    })
 
 
 # =========================================================
@@ -1689,341 +1747,631 @@ def get_products():
     methods=["POST"]
 )
 def search():
-
     try:
-
         data = request.get_json(
             silent=True
         ) or {}
 
-
-        query = data.get(
-            "query",
-            ""
+        query = str(
+            data.get(
+                "query",
+                ""
+            )
         ).strip()
 
-
         if not query:
-
             return jsonify({
-
                 "success": False,
-
                 "message":
                     "Search query is required."
-
             }), 400
 
+        # =================================================
+        # STEP 1 — LIVE SHOPPING SEARCH
+        # =================================================
 
-        # -------------------------------------------------
-        # ORIGINAL QUERY
-        # -------------------------------------------------
+        # Pakistan + International shopping search.
+        pakistan_query = (
+            f"{query} buy online Pakistan "
+            f"price product"
+        )
 
-        original_query = query
+        international_query = (
+            f"{query} buy online "
+            f"price product"
+        )
 
+        pakistan_result = tinyfish_search(
+            query=pakistan_query,
+            location="PK",
+            language="en",
+            page=0
+        )
 
-        # -------------------------------------------------
-        # LOWERCASE QUERY
-        # -------------------------------------------------
+        international_result = tinyfish_search(
+            query=international_query,
+            location="US",
+            language="en",
+            page=0
+        )
 
-        search_query = query.lower()
+        if (
+            pakistan_result is None
+            and international_result is None
+        ):
+            return jsonify({
+                "success": False,
+                "message":
+                    "Live web search is currently unavailable."
+            }), 502
 
+        pakistan_results = []
 
-        # -------------------------------------------------
-        # CATEGORY ALIASES
-        # -------------------------------------------------
-
-        category_aliases = {
-
-            "phone": "Smartphones",
-
-            "phones": "Smartphones",
-
-            "smartphone": "Smartphones",
-
-            "smartphones": "Smartphones",
-
-            "laptop": "Laptops",
-
-            "laptops": "Laptops",
-
-            "computer": "Laptops",
-
-            "computers": "Laptops",
-
-            "headphone": "Headphones & Audio",
-
-            "headphones": "Headphones & Audio",
-
-            "earbuds": "Headphones & Audio",
-
-            "earbud": "Headphones & Audio",
-
-            "camera": "Cameras",
-
-            "cameras": "Cameras",
-
-            "gaming": "Gaming",
-
-            "beauty": "Beauty",
-
-            "skincare": "Skincare",
-
-            "kitchen": "Kitchen",
-
-            "fitness": "Fitness",
-
-            "fashion": "Fashion"
-
-        }
-
-
-        detected_category = None
-
-
-        for keyword, category in category_aliases.items():
-
-            if re.search(
-                rf"\b{re.escape(keyword)}\b",
-                search_query
-            ):
-
-                detected_category = category
-
-                break
-
-
-        # -------------------------------------------------
-        # PRICE LIMIT
-        # -------------------------------------------------
-
-        price_limit = None
-
-
-        price_patterns = [
-
-            r"under\s*\$?\s*([\d,]+(?:\.\d+)?)",
-
-            r"below\s*\$?\s*([\d,]+(?:\.\d+)?)",
-
-            r"less than\s*\$?\s*([\d,]+(?:\.\d+)?)",
-
-            r"up to\s*\$?\s*([\d,]+(?:\.\d+)?)",
-
-            r"within\s*\$?\s*([\d,]+(?:\.\d+)?)"
-
-        ]
-
-
-        for pattern in price_patterns:
-
-            match = re.search(
-                pattern,
-                search_query
+        if isinstance(
+            pakistan_result,
+            dict
+        ):
+            pakistan_results = pakistan_result.get(
+                "results",
+                []
             )
 
-            if match:
+        if not isinstance(
+            pakistan_results,
+            list
+        ):
+            pakistan_results = []
 
-                price_text = (
-                    match.group(1)
-                    .replace(",", "")
-                )
+        international_results = []
 
+        if isinstance(
+            international_result,
+            dict
+        ):
+            international_results = international_result.get(
+                "results",
+                []
+            )
 
-                try:
+        if not isinstance(
+            international_results,
+            list
+        ):
+            international_results = []
 
-                    price_limit = float(
-                        price_text
-                    )
+        # Combine both markets while keeping
+        # each market represented.
+        web_results = []
 
-                except ValueError:
+        for item in pakistan_results:
+            web_results.append(item)
 
-                    price_limit = None
+        for item in international_results:
+            web_results.append(item)
 
+        # =================================================
+        # STEP 2 — FILTER SHOPPING PAGES
+        # =================================================
 
+        blocked_domains = (
+            "wikipedia.org",
+            "youtube.com",
+            "facebook.com",
+            "instagram.com",
+            "tiktok.com",
+            "reddit.com",
+            "quora.com",
+            "pinterest.com",
+            "twitter.com",
+            "x.com",
+            "linkedin.com",
+            "medium.com"
+        )
+
+        blocked_paths = (
+            "/wiki/",
+            "/blog/",
+            "/article/",
+            "/articles/",
+            "/news/",
+            "/review/",
+            "/reviews/",
+            "/guide/",
+            "/guides/",
+            "/forum/",
+            "/forums/",
+            "/community/",
+            "/discussion/",
+            "/video/",
+            "/videos/",
+            "/podcast/",
+            "/author/",
+            "/category/",
+            "/tag/"
+        )
+
+        shopping_results = []
+        seen_urls = set()
+
+        for item in web_results:
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
+
+            url = item.get(
+                "url",
+                ""
+            )
+
+            if not isinstance(
+                url,
+                str
+            ):
+                continue
+
+            url = url.strip()
+
+            if not url:
+                continue
+
+            parsed = urlparse(
+                url
+            )
+
+            domain = (
+                parsed.netloc
+                or ""
+            ).lower()
+
+            path = (
+                parsed.path
+                or ""
+            ).lower()
+
+            if not domain:
+                continue
+
+            if any(
+                blocked in domain
+                for blocked in blocked_domains
+            ):
+                continue
+
+            if any(
+                blocked in path
+                for blocked in blocked_paths
+            ):
+                continue
+
+            if url in seen_urls:
+                continue
+
+            seen_urls.add(url)
+
+            shopping_results.append(
+                item
+            )
+
+        # Keep up to 10 candidates from each market.
+        pakistan_candidates = []
+        international_candidates = []
+
+        pakistan_domains = set()
+
+        for item in pakistan_results:
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
+
+            url = item.get(
+                "url",
+                ""
+            )
+
+            if not isinstance(
+                url,
+                str
+            ):
+                continue
+
+            url = url.strip()
+
+            if not url:
+                continue
+
+            if url not in seen_urls:
+                continue
+
+            pakistan_candidates.append(item)
+
+            if len(pakistan_candidates) >= 10:
                 break
 
+        for item in international_results:
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
 
-        # -------------------------------------------------
-        # DATABASE SEARCH
-        # -------------------------------------------------
+            url = item.get(
+                "url",
+                ""
+            )
 
-        connection = get_db_connection()
+            if not isinstance(
+                url,
+                str
+            ):
+                continue
 
-        cursor = connection.cursor()
+            url = url.strip()
 
+            if not url:
+                continue
 
-        if detected_category and price_limit is not None:
+            if url not in seen_urls:
+                continue
 
-            cursor.execute("""
-                SELECT
-                    id,
-                    name,
-                    brand,
-                    category,
-                    price,
-                    old_price,
-                    rating,
-                    value,
-                    icon,
-                    best
-                FROM products
+            international_candidates.append(item)
 
-                WHERE
-                    category = ?
-                    AND price <= ?
+            if len(international_candidates) >= 10:
+                break
 
-                ORDER BY
-                    value DESC,
-                    rating DESC,
-                    price ASC
-            """, (
+        # Use the filtered candidates from both markets.
+        shopping_results = (
+            pakistan_candidates
+            + international_candidates
+        )
 
-                detected_category,
+        result_urls = []
 
-                price_limit
+        for item in shopping_results:
+            url = item.get(
+                "url",
+                ""
+            )
 
-            ))
+            if isinstance(
+                url,
+                str
+            ):
+                url = url.strip()
 
+                if url:
+                    result_urls.append(
+                        url
+                    )
 
-        elif detected_category:
+        # =================================================
+        # STEP 3 — FETCH LIVE PAGES
+        # =================================================
 
-            cursor.execute("""
-                SELECT
-                    id,
-                    name,
-                    brand,
-                    category,
-                    price,
-                    old_price,
-                    rating,
-                    value,
-                    icon,
-                    best
-                FROM products
+        # TinyFish accepts up to 10 URLs per fetch.
+        # Fetch Pakistan and international candidates
+        # separately so both markets can reach verification.
+        fetch_batches = []
 
-                WHERE category = ?
+        for start in range(
+            0,
+            len(result_urls),
+            10
+        ):
+            fetch_batches.append(
+                result_urls[
+                    start:start + 10
+                ]
+            )
 
-                ORDER BY
-                    value DESC,
-                    rating DESC,
-                    price ASC
-            """, (
+        fetched_pages = {}
 
-                detected_category,
+        for batch in fetch_batches:
+            batch_result = tinyfish_fetch(
+                batch,
+                image_links=True
+            )
 
-            ))
+            if batch_result is None:
+                continue
 
+            batch_pages = get_fetched_page_data(
+                batch_result
+            )
 
-        elif price_limit is not None:
+            fetched_pages.update(
+                batch_pages
+            )
 
-            cursor.execute("""
-                SELECT
-                    id,
-                    name,
-                    brand,
-                    category,
-                    price,
-                    old_price,
-                    rating,
-                    value,
-                    icon,
-                    best
-                FROM products
+        print(
+            "TINYFISH:",
+            len(shopping_results),
+            "search candidates ->",
+            len(fetched_pages),
+            "verified product pages"
+        )
 
-                WHERE price <= ?
+        # =================================================
+        # STEP 4 — BUILD VERIFIED PRODUCTS
+        # =================================================
 
-                ORDER BY
-                    value DESC,
-                    rating DESC,
-                    price ASC
-            """, (
+        products = []
 
-                price_limit,
+        for item in shopping_results:
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
 
-            ))
+            original_url = item.get(
+                "url",
+                ""
+            )
 
+            if not isinstance(
+                original_url,
+                str
+            ):
+                continue
 
-        else:
+            original_url = original_url.strip()
 
-            search_value = f"%{search_query}%"
+            if not original_url:
+                continue
 
+            page_data = fetched_pages.get(
+                original_url
+            )
 
-            cursor.execute("""
-                SELECT
-                    id,
-                    name,
-                    brand,
-                    category,
-                    price,
-                    old_price,
-                    rating,
-                    value,
-                    icon,
-                    best
-                FROM products
+            if not page_data:
+                continue
 
-                WHERE
-                    LOWER(name) LIKE ?
-                    OR LOWER(brand) LIKE ?
-                    OR LOWER(category) LIKE ?
+            page_text = page_data.get(
+                "text",
+                ""
+            )
 
-                ORDER BY
-                    value DESC,
-                    rating DESC,
-                    price ASC
-            """, (
+            page_html = page_data.get(
+                "html",
+                ""
+            )
 
-                search_value,
+            if not isinstance(
+                page_text,
+                str
+            ):
+                page_text = ""
 
-                search_value,
+            if not isinstance(
+                page_html,
+                str
+            ):
+                page_html = ""
 
-                search_value
+            # -------------------------------------------------
+            # PRODUCT NAME
+            # -------------------------------------------------
 
-            ))
+            product_name = page_data.get(
+                "product_name",
+                ""
+            )
 
+            if not isinstance(
+                product_name,
+                str
+            ):
+                product_name = ""
 
-        rows = cursor.fetchall()
+            product_name = product_name.strip()
 
-        connection.close()
+            if not product_name:
+                product_name = item.get(
+                    "title",
+                    ""
+                )
 
+            if not isinstance(
+                product_name,
+                str
+            ):
+                continue
 
-        products = [
+            product_name = product_name.strip()
 
-            product_to_dict(row)
+            if not product_name:
+                continue
 
-            for row in rows
+            # -------------------------------------------------
+            # PRICE
+            # -------------------------------------------------
 
-        ]
+            combined_text = (
+                f"{product_name}\n"
+                f"{page_text}"
+            )
 
+            price = extract_product_price(
+                page_text,
+                page_html
+            )
+
+            # Do NOT discard a valid product because the
+            # page parser missed a price.
+            #
+            # However, we also do not invent a price.
+            if price is not None and price <= 0:
+                price = None
+
+            # -------------------------------------------------
+            # IMAGE
+            # -------------------------------------------------
+
+            image = page_data.get(
+                "image",
+                ""
+            )
+
+            if not isinstance(
+                image,
+                str
+            ):
+                image = ""
+
+            image = image.strip()
+
+            # Exact product image is required.
+            if not image:
+                continue
+
+            # -------------------------------------------------
+            # OLD PRICE
+            # -------------------------------------------------
+
+            old_price = extract_old_price(
+                combined_text,
+                current_price=price
+            )
+
+            # -------------------------------------------------
+            # RATING
+            # -------------------------------------------------
+
+            rating = extract_product_rating(
+                combined_text
+            )
+
+            # -------------------------------------------------
+            # STORE / BRAND
+            # -------------------------------------------------
+
+            final_url = page_data.get(
+                "final_url",
+                ""
+            )
+
+            if not isinstance(
+                final_url,
+                str
+            ):
+                final_url = ""
+
+            source_url = (
+                final_url
+                or original_url
+            )
+
+            parsed_source = urlparse(
+                source_url
+            )
+
+            source = (
+                parsed_source.netloc
+                .replace("www.", "")
+                if parsed_source.netloc
+                else ""
+            )
+
+            source = source.strip()
+
+            # -------------------------------------------------
+            # DESCRIPTION
+            # -------------------------------------------------
+
+            snippet = item.get(
+                "snippet",
+                ""
+            )
+
+            if not isinstance(
+                snippet,
+                str
+            ):
+                snippet = ""
+
+            snippet = snippet.strip()
+
+            if not snippet:
+                snippet = page_text[:300].strip()
+
+            # -------------------------------------------------
+            # FINAL PRODUCT
+            # -------------------------------------------------
+
+            products.append({
+                "name": product_name,
+                "brand": source,
+                "category": "Web Result",
+                "price": price,
+                "oldPrice": old_price,
+                "rating": rating,
+                "value": None,
+                "icon": "🛍️",
+                "best": False,
+                "description": snippet,
+                "url": source_url,
+                "source": source,
+                "image": image
+            })
+
+        # =================================================
+        # REMOVE DUPLICATE PRODUCTS
+        # =================================================
+
+        unique_products = []
+        seen_product_urls = set()
+
+        for product in products:
+            product_url = product.get(
+                "url",
+                ""
+            )
+
+            if product_url in seen_product_urls:
+                continue
+
+            seen_product_urls.add(
+                product_url
+            )
+
+            unique_products.append(
+                product
+            )
+
+        products = unique_products
+
+        print(
+            "VERIFIED PRODUCTS:",
+            len(products)
+        )
+
+        # =================================================
+        # RETURN
+        # =================================================
 
         return jsonify({
-
             "success": True,
-
-            "query":
-                original_query,
-
-            "products":
-                products
-
+            "query": query,
+            "source": "tinyfish",
+            "total_results": len(products),
+            "products": products,
+            "results": products
         })
 
-
     except Exception as error:
-
         print(
             "SEARCH ERROR:",
             error
         )
 
         return jsonify({
-
             "success": False,
-
             "message":
-                "Something went wrong with the search."
-
+                "Something went wrong with the live search."
         }), 500
 
 
@@ -2036,122 +2384,52 @@ def search():
     methods=["GET"]
 )
 def database_test():
-
     try:
-
         connection = get_db_connection()
-
         cursor = connection.cursor()
 
-
-        # -------------------------------------------------
-        # USER COUNT
-        # -------------------------------------------------
-
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) AS total
             FROM users
-        """)
+            """
+        )
 
+        users_count = cursor.fetchone()[
+            "total"
+        ]
 
-        users_count = cursor.fetchone()["total"]
-
-
-        # -------------------------------------------------
-        # PRODUCT COUNT
-        # -------------------------------------------------
-
-        cursor.execute("""
-            SELECT COUNT(*) AS total
-            FROM products
-        """)
-
-
-        products_count = cursor.fetchone()["total"]
-
-
-        # -------------------------------------------------
-        # USER COLUMNS
-        # -------------------------------------------------
-
-        cursor.execute("""
+        cursor.execute(
+            """
             PRAGMA table_info(users)
-        """)
-
+            """
+        )
 
         user_columns = [
-
             row["name"]
-
             for row in cursor.fetchall()
-
         ]
-
-
-        # -------------------------------------------------
-        # PRODUCT COLUMNS
-        # -------------------------------------------------
-
-        cursor.execute("""
-            PRAGMA table_info(products)
-        """)
-
-
-        product_columns = [
-
-            row["name"]
-
-            for row in cursor.fetchall()
-
-        ]
-
 
         connection.close()
 
-
-        # -------------------------------------------------
-        # RETURN DATABASE INFORMATION
-        # -------------------------------------------------
-
         return jsonify({
-
             "success": True,
-
-            "database":
-                "connected",
-
-            "users":
-                users_count,
-
-            "products":
-                products_count,
-
-            "user_columns":
-                user_columns,
-
-            "product_columns":
-                product_columns
-
+            "database": "connected",
+            "users": users_count,
+            "products": "live-only",
+            "user_columns": user_columns
         })
 
-
     except Exception as error:
-
         print(
             "DATABASE ERROR:",
             error
         )
 
         return jsonify({
-
             "success": False,
-
-            "database":
-                "error",
-
-            "message":
-                str(error)
-
+            "database": "error",
+            "message": str(error)
         }), 500
 
 
@@ -2160,40 +2438,30 @@ def database_test():
 # =========================================================
 
 if __name__ == "__main__":
-
     init_database()
-
 
     print("")
     print("========================================")
     print("       USA SHOPPING ASSISTANT")
     print("========================================")
     print("")
-
     print(
         "Database:",
         DATABASE_PATH
     )
-
     print("")
-
     print(
         "Website:",
         "http://127.0.0.1:5000"
     )
-
     print("")
-
     print(
-        "API:",
-        "http://127.0.0.1:5000/api/products"
+        "Live Search API:",
+        "http://127.0.0.1:5000/api/search"
     )
-
     print("")
-
     print("========================================")
     print("")
-
 
     app.run(
         host="127.0.0.1",
