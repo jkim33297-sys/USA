@@ -166,6 +166,218 @@ function showAuthMessage(
 }
 
 
+function saveAuthenticatedUser(user) {
+    localStorage.setItem(
+        "usaLoggedIn",
+        "true"
+    );
+    localStorage.setItem(
+        "buyBuddyLoggedIn",
+        "true"
+    );
+    localStorage.setItem(
+        "usaUser",
+        JSON.stringify(user)
+    );
+    localStorage.setItem(
+        "buyBuddyUser",
+        JSON.stringify(user)
+    );
+}
+
+
+// =====================================================
+// GOOGLE SIGN-IN
+// =====================================================
+
+const googleAuthButton =
+    document.querySelector(".google-btn");
+
+if (googleAuthButton) {
+    let googleTokenClient = null;
+    let googleAuthError =
+        "Google sign-in is still initializing. Please try again shortly.";
+
+    async function initializeGoogleSignIn() {
+        try {
+            if (window.location.protocol === "file:") {
+                throw new Error(
+                    "Open this page through Flask at http://127.0.0.1:5000/Signup.html instead of opening the HTML file directly."
+                );
+            }
+
+            let response;
+            try {
+                response = await fetch(
+                    "/api/auth/google/config"
+                );
+            } catch (error) {
+                throw new Error(
+                    "Could not reach the USA server. Start the Flask app and open the site through its local address."
+                );
+            }
+
+            let config;
+            try {
+                config = await response.json();
+            } catch (error) {
+                throw new Error(
+                    "The USA server returned an invalid Google sign-in configuration."
+                );
+            }
+
+            if (!response.ok || !config.clientId) {
+                throw new Error(
+                    config.message ||
+                    "Google sign-in is not configured on this server."
+                );
+            }
+
+            if (!window.google?.accounts?.oauth2) {
+                await new Promise((resolve, reject) => {
+                    const googleScript =
+                        document.createElement("script");
+                    googleScript.src =
+                        "https://accounts.google.com/gsi/client";
+                    googleScript.async = true;
+                    googleScript.addEventListener(
+                        "load",
+                        resolve,
+                        { once: true }
+                    );
+                    googleScript.addEventListener(
+                        "error",
+                        () => reject(
+                            new Error(
+                                "Google sign-in could not be loaded. Check your internet connection."
+                            )
+                        ),
+                        { once: true }
+                    );
+                    document.head.appendChild(googleScript);
+                });
+            }
+
+            if (!window.google?.accounts?.oauth2) {
+                throw new Error(
+                    "Google sign-in could not be loaded. Check your internet connection."
+                );
+            }
+
+            googleTokenClient =
+                window.google.accounts.oauth2.initTokenClient({
+                    client_id: config.clientId,
+                    scope: "openid email profile",
+                    callback: async (tokenResponse) => {
+                        if (
+                            tokenResponse.error
+                            || !tokenResponse.access_token
+                        ) {
+                            showAuthMessage(
+                                "Google Sign-In Error",
+                                "Google sign-in was cancelled or could not be completed.",
+                                "error"
+                            );
+                            return;
+                        }
+
+                        try {
+                            const response = await fetch(
+                                "/api/auth/google",
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json"
+                                    },
+                                    body: JSON.stringify({
+                                        accessToken:
+                                            tokenResponse.access_token
+                                    })
+                                }
+                            );
+                            const data = await response.json();
+
+                            if (!response.ok || !data.success) {
+                                showAuthMessage(
+                                    "Google Sign-In Error",
+                                    data.message ||
+                                    "Unable to sign in with Google.",
+                                    "error"
+                                );
+                                return;
+                            }
+
+                            saveAuthenticatedUser(data.user);
+                            window.location.href =
+                                "/Pages/home/home.html";
+                        } catch (error) {
+                            console.error(
+                                "Google sign-in error:",
+                                error
+                            );
+                            showAuthMessage(
+                                "Connection Error",
+                                "Unable to connect to the USA server.",
+                                "error"
+                            );
+                        }
+                    }
+                });
+
+            googleAuthError = "";
+        } catch (error) {
+            googleAuthError = error.message;
+            console.error(
+                "Google sign-in initialization error:",
+                error
+            );
+        }
+    }
+
+    googleAuthButton.addEventListener(
+        "click",
+        function () {
+            const termsCheckbox =
+                document.querySelector(".terms input");
+
+            if (termsCheckbox && !termsCheckbox.checked) {
+                showAuthMessage(
+                    "Terms Required",
+                    "Please agree to the Terms & Conditions and Privacy Policy before creating an account.",
+                    "error"
+                );
+                return;
+            }
+
+            if (!googleTokenClient) {
+                showAuthMessage(
+                    "Google Sign-In Unavailable",
+                    googleAuthError,
+                    "error"
+                );
+                return;
+            }
+
+            try {
+                googleTokenClient.requestAccessToken();
+            } catch (error) {
+                console.error(
+                    "Google sign-in popup error:",
+                    error
+                );
+                showAuthMessage(
+                    "Google Sign-In Error",
+                    "Unable to open Google sign-in. Please try again.",
+                    "error"
+                );
+            }
+        }
+    );
+
+    initializeGoogleSignIn();
+}
+
+
 // =====================================================
 // SIGN UP
 // =====================================================
@@ -316,32 +528,7 @@ if (signupForm) {
                     "Continue",
                     function () {
 
-                        // Save login status
-
-                        localStorage.setItem(
-                            "usaLoggedIn",
-                            "true"
-                        );
-
-
-                        localStorage.setItem(
-                            "buyBuddyLoggedIn",
-                            "true"
-                        );
-
-
-                        // Save user information
-
-                        localStorage.setItem(
-                            "usaUser",
-                            JSON.stringify(data.user)
-                        );
-
-
-                        localStorage.setItem(
-                            "buyBuddyUser",
-                            JSON.stringify(data.user)
-                        );
+                        saveAuthenticatedUser(data.user);
 
 
                         // -------------------------------------
@@ -485,32 +672,7 @@ if (loginForm) {
 
                 if (data.success) {
 
-                    // Save login status
-
-                    localStorage.setItem(
-                        "usaLoggedIn",
-                        "true"
-                    );
-
-
-                    localStorage.setItem(
-                        "buyBuddyLoggedIn",
-                        "true"
-                    );
-
-
-                    // Save user information
-
-                    localStorage.setItem(
-                        "usaUser",
-                        JSON.stringify(data.user)
-                    );
-
-
-                    localStorage.setItem(
-                        "buyBuddyUser",
-                        JSON.stringify(data.user)
-                    );
+                    saveAuthenticatedUser(data.user);
 
 
                     // ---------------------------------

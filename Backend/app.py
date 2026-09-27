@@ -31,6 +31,11 @@ if not TINYFISH_API_KEY:
         "TINYFISH_API_KEY was not found in backend/.env"
     )
 
+GOOGLE_CLIENT_ID = os.getenv(
+    "GOOGLE_CLIENT_ID",
+    ""
+).strip()
+
 TINYFISH_SEARCH_URL = "https://api.search.tinyfish.ai"
 TINYFISH_FETCH_URL = "https://api.fetch.tinyfish.ai"
 
@@ -1411,6 +1416,276 @@ def frontend_files(
 # =========================================================
 # SIGN UP
 # =========================================================
+
+@app.route(
+    "/api/auth/google/config",
+    methods=["GET"]
+)
+def google_auth_config():
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({
+            "success": False,
+            "message":
+                "Google sign-in is not configured on this server."
+        }), 503
+
+    return jsonify({
+        "success": True,
+        "clientId": GOOGLE_CLIENT_ID
+    }), 200
+
+
+@app.route(
+    "/api/auth/google",
+    methods=["POST"]
+)
+def google_auth():
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({
+            "success": False,
+            "message":
+                "Google sign-in is not configured on this server."
+        }), 503
+
+    data = request.get_json(
+        silent=True
+    ) or {}
+    if not isinstance(data, dict):
+        return jsonify({
+            "success": False,
+            "message": "A valid Google sign-in request is required."
+        }), 400
+
+    access_token = data.get("accessToken")
+
+    if (
+        not isinstance(access_token, str)
+        or not access_token
+        or len(access_token) > 8192
+    ):
+        return jsonify({
+            "success": False,
+            "message": "A valid Google access token is required."
+        }), 400
+
+    try:
+        token_response = requests.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={
+                "access_token": access_token
+            },
+            timeout=10
+        )
+    except requests.RequestException:
+        print("GOOGLE TOKEN VERIFICATION REQUEST FAILED.")
+        return jsonify({
+            "success": False,
+            "message":
+                "Unable to verify your Google sign-in right now."
+        }), 502
+
+    if not token_response.ok:
+        return jsonify({
+            "success": False,
+            "message":
+                "Google could not verify this sign-in. Please try again."
+        }), 401
+
+    try:
+        token_info = token_response.json()
+    except ValueError:
+        return jsonify({
+            "success": False,
+            "message":
+                "Google returned an invalid sign-in response."
+        }), 502
+
+    if not isinstance(token_info, dict):
+        return jsonify({
+            "success": False,
+            "message":
+                "Google returned an invalid sign-in response."
+        }), 502
+
+    token_audiences = {
+        token_info.get(field)
+        for field in ("aud", "audience", "issued_to")
+        if isinstance(token_info.get(field), str)
+    }
+    token_scopes = set(
+        str(token_info.get("scope", "")).split()
+    )
+
+    try:
+        token_is_unexpired = (
+            int(token_info.get("expires_in", 0)) > 0
+        )
+    except (TypeError, ValueError):
+        token_is_unexpired = False
+
+    if (
+        GOOGLE_CLIENT_ID not in token_audiences
+        or not token_is_unexpired
+        or not any(
+            scope == "email"
+            or scope.endswith("/auth/userinfo.email")
+            for scope in token_scopes
+        )
+    ):
+        return jsonify({
+            "success": False,
+            "message":
+                "Google could not verify this sign-in. Please try again."
+        }), 401
+
+    try:
+        profile_response = requests.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={
+                "Authorization": f"Bearer {access_token}"
+            },
+            timeout=10
+        )
+    except requests.RequestException:
+        print("GOOGLE PROFILE LOOKUP REQUEST FAILED.")
+        return jsonify({
+            "success": False,
+            "message":
+                "Unable to load your Google profile right now."
+        }), 502
+
+    if not profile_response.ok:
+        return jsonify({
+            "success": False,
+            "message":
+                "Google could not verify this sign-in. Please try again."
+        }), 401
+
+    try:
+        profile = profile_response.json()
+    except ValueError:
+        return jsonify({
+            "success": False,
+            "message":
+                "Google returned an invalid profile response."
+        }), 502
+
+    if not isinstance(profile, dict):
+        return jsonify({
+            "success": False,
+            "message":
+                "Google returned an invalid profile response."
+        }), 502
+
+    email = str(
+        profile.get("email", "")
+    ).strip().lower()
+    email_verified = profile.get("email_verified") is True
+    google_user_id = profile.get("sub")
+    token_user_id = (
+        token_info.get("sub")
+        or token_info.get("user_id")
+    )
+
+    if (
+        not email
+        or not email_verified
+        or not google_user_id
+        or (
+            token_user_id
+            and token_user_id != google_user_id
+        )
+    ):
+        return jsonify({
+            "success": False,
+            "message":
+                "A verified Google email is required to continue."
+        }), 401
+
+    full_name = str(
+        profile.get("name", "")
+    ).strip()
+    name_parts = full_name.split(maxsplit=1)
+    first_name = str(
+        profile.get("given_name")
+        or (name_parts[0] if name_parts else email.split("@")[0])
+    ).strip()
+    last_name = str(
+        profile.get("family_name")
+        or (name_parts[1] if len(name_parts) > 1 else "")
+    ).strip()
+
+    connection = None
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+
+        cursor.execute(
+            """
+            SELECT id, first_name, last_name, email
+            FROM users
+            WHERE email = ?
+            """,
+            (email,)
+        )
+        user = cursor.fetchone()
+
+        if user is None:
+            cursor.execute(
+                """
+                INSERT INTO users
+                (
+                    first_name,
+                    last_name,
+                    email,
+                    password,
+                    password_hash,
+                    salt
+                )
+                VALUES (?, ?, ?, NULL, NULL, NULL)
+                """,
+                (
+                    first_name,
+                    last_name,
+                    email
+                )
+            )
+            cursor.execute(
+                """
+                SELECT id, first_name, last_name, email
+                FROM users
+                WHERE email = ?
+                """,
+                (email,)
+            )
+            user = cursor.fetchone()
+
+        connection.commit()
+    except sqlite3.Error as error:
+        if connection is not None:
+            connection.rollback()
+        print("GOOGLE SIGN-IN DATABASE ERROR:", error)
+        return jsonify({
+            "success": False,
+            "message":
+                "Something went wrong while signing in."
+        }), 500
+    finally:
+        if connection is not None:
+            connection.close()
+
+    return jsonify({
+        "success": True,
+        "message": "Google sign-in successful.",
+        "user": {
+            "id": user["id"],
+            "firstName": user["first_name"],
+            "lastName": user["last_name"],
+            "email": user["email"]
+        }
+    }), 200
+
 
 @app.route(
     "/api/signup",

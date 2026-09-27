@@ -331,6 +331,15 @@ For example:
 
 Recommendations should be understandable rather than feeling like a mysterious AI decision.
 
+### Google sign-in setup
+
+Google sign-in requires a Google OAuth 2.0 **Web application** client ID. Set
+`GOOGLE_CLIENT_ID` in `Backend/.env` alongside the existing backend settings.
+In Google Cloud Console, add the address where the Flask app is served (for
+example, `http://127.0.0.1:5000`) to the OAuth client's authorized JavaScript
+origins. The client ID is public configuration; do not put a client secret in
+frontend code.
+
 ---
 
 # 📈 Future Possibilities
