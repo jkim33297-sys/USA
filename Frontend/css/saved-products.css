@@ -1,0 +1,123 @@
+#savedProductsOverlay,
+#exploreWishlistOverlay,
+#searchSavedOverlay {
+    background: rgba(2, 6, 23, 0.78) !important;
+    backdrop-filter: blur(8px);
+}
+
+#savedProductsOverlay > div,
+#exploreWishlistOverlay > div,
+#searchSavedOverlay > div {
+    background: linear-gradient(145deg, #0D1B2E, #0A1426) !important;
+    border: 1px solid rgba(14, 165, 233, 0.24);
+    border-radius: 24px;
+    box-shadow:
+        0 24px 70px rgba(0, 0, 0, 0.55),
+        0 0 34px rgba(14, 165, 233, 0.1);
+    color: #FFFFFF !important;
+    scrollbar-color: #1D5272 #0A1426;
+}
+
+#savedProductsOverlay h2,
+#savedProductsOverlay h3,
+#exploreWishlistOverlay h2,
+#exploreWishlistOverlay h3,
+#searchSavedOverlay h2,
+#searchSavedOverlay h3 {
+    color: #FFFFFF !important;
+}
+
+#savedProductsOverlay p,
+#exploreWishlistOverlay p,
+#searchSavedOverlay p,
+#savedProductsOverlay [style*="color:#777"],
+#savedProductsOverlay [style*="color: #777"],
+#savedProductsOverlay [style*="color:#888"],
+#savedProductsOverlay [style*="color: #888"],
+#exploreWishlistOverlay [style*="color:#777"],
+#exploreWishlistOverlay [style*="color: #777"],
+#exploreWishlistOverlay [style*="color:#888"],
+#exploreWishlistOverlay [style*="color: #888"],
+#searchSavedOverlay [style*="color:#777"],
+#searchSavedOverlay [style*="color: #777"],
+#searchSavedOverlay [style*="color:#888"],
+#searchSavedOverlay [style*="color: #888"] {
+    color: #94A3B8 !important;
+}
+
+#savedProductsOverlay div[style*="background:#fff"],
+#savedProductsOverlay div[style*="background: #fff"],
+#exploreWishlistOverlay div[style*="background:#fff"],
+#exploreWishlistOverlay div[style*="background: #fff"],
+#searchSavedOverlay div[style*="background:#fff"],
+#searchSavedOverlay div[style*="background: #fff"] {
+    background: #0F2040 !important;
+    border-color: rgba(14, 165, 233, 0.18) !important;
+}
+
+#savedProductsOverlay img[style*="background:#f7f7f7"],
+#savedProductsOverlay div[style*="background:#f7f7f7"],
+#exploreWishlistOverlay img[style*="background:#f7f7f7"],
+#exploreWishlistOverlay div[style*="background:#f7f7f7"],
+#searchSavedOverlay img[style*="background:#f7f7f7"],
+#searchSavedOverlay div[style*="background:#f7f7f7"] {
+    background: #091426 !important;
+}
+
+#savedProductsOverlay a[style*="background:#111"],
+#exploreWishlistOverlay a[style*="background:#111"],
+#searchSavedOverlay a[style*="background:#111"] {
+    background: linear-gradient(135deg, #0EA5E9, #2563EB) !important;
+    color: #FFFFFF !important;
+    box-shadow: 0 4px 14px rgba(14, 165, 233, 0.2);
+}
+
+#savedProductsOverlay button,
+#exploreWishlistOverlay button,
+#searchSavedOverlay button {
+    border: 1px solid rgba(14, 165, 233, 0.24) !important;
+    background: #0D1B2E !important;
+    color: #E2F3FF !important;
+    transition:
+        background 0.2s ease,
+        border-color 0.2s ease,
+        color 0.2s ease;
+}
+
+#savedProductsOverlay button:hover,
+#exploreWishlistOverlay button:hover,
+#searchSavedOverlay button:hover {
+    border-color: rgba(14, 165, 233, 0.6) !important;
+    background: rgba(14, 165, 233, 0.16) !important;
+    color: #FFFFFF !important;
+}
+
+#closeSavedProducts,
+#closeExploreWishlist,
+#closeSearchSaved {
+    background: rgba(14, 165, 233, 0.12) !important;
+    color: #7DD3FC !important;
+    font-size: 22px !important;
+}
+
+#savedProductsOverlay a,
+#exploreWishlistOverlay a,
+#searchSavedOverlay a {
+    color: #7DD3FC;
+}
+
+@media (max-width: 600px) {
+    #savedProductsOverlay,
+    #exploreWishlistOverlay,
+    #searchSavedOverlay {
+        padding: 12px !important;
+    }
+
+    #savedProductsOverlay > div,
+    #exploreWishlistOverlay > div,
+    #searchSavedOverlay > div {
+        max-height: 94vh !important;
+        padding: 20px !important;
+        border-radius: 20px !important;
+    }
+}

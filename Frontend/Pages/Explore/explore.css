@@ -668,13 +668,13 @@ footer {
 
     text-align: center;
 
-    background: white;
+    background: var(--usa-bg-canvas);
 
     padding: 45px 20px;
 
-    border-top: 1px solid #eee;
+    border-top: 1px solid var(--usa-border-subtle);
 
-    color: #7b8190;
+    color: var(--usa-text-secondary);
 }
 
 
@@ -684,7 +684,7 @@ footer {
 
     font-weight: 800;
 
-    color: #172033;
+    color: var(--usa-text-primary);
 
     margin-bottom: 5px;
 }
